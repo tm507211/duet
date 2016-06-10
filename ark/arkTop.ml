@@ -82,6 +82,19 @@ let _ =
     let phi = load_formula Sys.argv.(i+1) in
     let psi = Quantifier.qe_mbp smt_ctx phi in
     print_result (smt_ctx#is_sat psi)
+  | "mbp" ->
+    let phi = load_formula Sys.argv.(i+1) in
+    let psi = Quantifier.qe_mbp smt_ctx phi in
+    Z3.SMT.benchmark_to_smtstring
+      smt_ctx#z3
+      (Sys.argv.(i+1))
+      ""
+      "sat"
+      ""
+      []
+      (smt_ctx#of_formula psi)
+    |> print_endline
+
   | "sat-z3qe" ->
     let phi = load_formula Sys.argv.(i+1) in
     print_result (smt_ctx#is_sat (smt_ctx#qe phi))

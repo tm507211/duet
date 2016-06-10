@@ -2,14 +2,10 @@ SETUP = ocaml setup.ml
 
 all: build
 
-.PHONY: build duet ark apak patools
+.PHONY: build ark apak patools
 
 build: setup.ml setup.data
 	$(SETUP) -build
-
-duet: setup.ml setup.data duet/src/config.ml
-	ocamlbuild duet/src/duet.native -tag debug
-	cp duet.native duet/duet
 
 ark: setup.ml setup.data
 	ocamlbuild ark/test_ark.native -tag debug

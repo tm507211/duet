@@ -1,0 +1,32 @@
+# OASIS_START
+# DO NOT EDIT (digest: 0a87d9d80d21bb95b48bf77f39e81314)
+apak/DisjointSet
+apak/Dll
+apak/Enumeration
+apak/EvalLink
+apak/ExtGraph
+apak/Fixpoint
+apak/Ka
+apak/Lattice
+apak/Log
+apak/Loop
+apak/Memo
+apak/Monoid
+apak/Pathexp
+apak/Persistent
+apak/RecGraph
+apak/Semilattice
+apak/Sese
+apak/Sig
+apak/Tagged
+apak/Putil
+ark/QQ
+ark/ZZ
+ark/Syntax
+ark/Interval
+ark/Smt
+ark/Linear
+ark/Interpretation
+ark/Abstract
+ark/Quantifier
+# OASIS_STOP

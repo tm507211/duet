@@ -433,9 +433,12 @@ module PInt = MakeCoreType(struct
   end)
 
 module PUnit = MakeCoreType(struct
-    type t = unit [@@deriving show,ord]
-    let hash _ = 0
-    let equal _ _ = true
+    type t = unit
+    let pp formatter () = ()
+    let show () = ""
+    let hash () = 0
+    let equal () () = true
+    let compare () () = 0
   end)
 
 module PChar = MakeCoreType(struct
