@@ -32,8 +32,8 @@ Running Ark
 
 Ark accepts input in SMTLIB2 format.
 
-- `./ark sat <FILE>`: test LIRA satisfiability using the SIMSAT algorithm (IJCAI'16)
-- `./ark sat-forward <FILE>`: test LIRA satisfiability using the forward variant of the SIMSAT algorithm (IJCAI'16)
-- `./ark sat-z3qe <FILE>`: test LIRA satisfiability using the Z3's built-in quantifier elimination
-- `./ark sat-mbp <FILE>`: test LRA satisfiability using model-based projection
-- `./ark mbp <FILE>`: LRA quantifier elimination via model-based projection
+- `./arkTop.native sat <FILE>`: test LIRA satisfiability using the SIMSAT algorithm (IJCAI'16)
+- `./arkTop.native sat-forward <FILE>`: test LIRA satisfiability using the forward variant of the SIMSAT algorithm (IJCAI'16)
+- `./arkTop.native sat-z3qe <FILE>`: test LIRA satisfiability using the Z3's built-in quantifier elimination
+- `./arkTop.native sat-mbp <FILE>`: test LRA satisfiability using model-based projection
+- `./arkTop.native mbp <FILE>`: LRA quantifier elimination via model-based projection
