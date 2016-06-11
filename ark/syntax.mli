@@ -42,6 +42,8 @@ val int_of_symbol : symbol -> int
 
 val symbol_of_int : int -> symbol
 
+val string_of_symbol : 'a context -> symbol -> string
+
 module Symbol : sig
   type t = symbol
   module Set : BatSet.S with type elt = symbol
@@ -76,6 +78,9 @@ val substitute_const : 'a context ->
   (symbol -> ('a,'b) expr) -> ('a,'typ) expr -> ('a,'typ) expr
 
 val fold_constants : (symbol -> 'a -> 'a) -> ('b, 'c) expr -> 'a -> 'a
+
+val pp_expr_smtlib2 : ?env:(string Env.t) -> 'a context -> Format.formatter ->
+  ('a,'typ) expr -> unit
 
 (** {3 Expression rewriting} *)
 

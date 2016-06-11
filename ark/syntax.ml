@@ -164,9 +164,11 @@ let mk_symbol ctx ?(name="K") typ =
   DynArray.length ctx.symbols - 1
 
 let typ_symbol ctx = snd % DynArray.get ctx.symbols
+
+let string_of_symbol ctx symbol = fst (DynArray.get ctx.symbols symbol)
 let pp_symbol ctx formatter symbol =
   Format.fprintf formatter "%s:%d"
-    (fst (DynArray.get ctx.symbols symbol))
+    (string_of_symbol ctx symbol)
     symbol
 
 let show_symbol ctx = Apak.Putil.mk_show (pp_symbol ctx)
@@ -432,6 +434,118 @@ let rec pp_expr ?(env=Env.empty) ctx formatter expr =
       (pp_expr ~env ctx) bthen
       (pp_expr ~env ctx) belse
   | _ -> failwith "pp_expr: ill-formed expression"
+
+let rec pp_expr_smtlib2 ?(env=Env.empty) ctx formatter expr =
+  let Node (label, children, _) = expr.obj in
+  let open Format in
+  match label, children with
+  | Real qq, [] ->
+    let (num, den) = QQ.to_zzfrac qq in
+    if ZZ.equal den ZZ.one then
+      ZZ.pp formatter num
+    else
+      fprintf formatter "(/ %a %a)"
+        ZZ.pp num
+        ZZ.pp den
+  | App k, [] ->
+    Format.pp_print_string formatter (fst (DynArray.get ctx.symbols k))
+  | App func, args ->
+    fprintf formatter "%s(%a)"
+      (fst (DynArray.get ctx.symbols func))
+      (ApakEnum.pp_print_enum (pp_expr_smtlib2 ~env ctx)) (BatList.enum args)
+  | Var (v, typ), [] ->
+    (try fprintf formatter "%s_%d" (Env.find env v) v
+     with Not_found -> fprintf formatter "[free:%d]" v)
+  | Add, terms ->
+    fprintf formatter "(+ @[";
+    ApakEnum.pp_print_enum
+      ~pp_sep:(fun formatter () -> fprintf formatter "@ ")
+      (pp_expr_smtlib2 ~env ctx)
+      formatter
+      (BatList.enum terms);
+    fprintf formatter "@])"
+  | Mul, terms ->
+    fprintf formatter "(* @[";
+    ApakEnum.pp_print_enum
+      ~pp_sep:(fun formatter () -> fprintf formatter "@ ")
+      (pp_expr_smtlib2 ~env ctx)
+      formatter
+      (BatList.enum terms);
+    fprintf formatter "@])"
+  | Div, [s; t] ->
+    fprintf formatter "(/@[%a@ %a@])"
+      (pp_expr_smtlib2 ~env ctx) s
+      (pp_expr_smtlib2 ~env ctx) t
+  | Mod, [s; t] ->
+    fprintf formatter "(mod @[%a@ %a@])"
+      (pp_expr_smtlib2 ~env ctx) s
+      (pp_expr_smtlib2 ~env ctx) t
+  | Floor, [t] ->
+    fprintf formatter "(floor @[%a@])" (pp_expr_smtlib2 ~env ctx) t
+  | Neg, [{obj = Node (Real qq, [], _)}] ->
+    QQ.pp formatter (QQ.negate qq)
+  | Neg, [{obj = Node (App _, _, _)} as t]
+  | Neg, [t] -> fprintf formatter "(- @[%a@])" (pp_expr_smtlib2 ~env ctx) t
+  | True, [] -> pp_print_string formatter "true"
+  | False, [] -> pp_print_string formatter "false"
+  | Not, [phi] ->
+    fprintf formatter "(not @[%a@])" (pp_expr_smtlib2 ~env ctx) phi
+  | And, conjuncts ->
+    fprintf formatter "(and @[";
+    ApakEnum.pp_print_enum
+      ~pp_sep:(fun formatter () -> fprintf formatter "@ ")
+      (pp_expr_smtlib2 ~env ctx)
+      formatter
+      (BatList.enum (List.concat (List.map (flatten_sexpr And) conjuncts)));
+    fprintf formatter "@])"
+  | Or, disjuncts ->
+    fprintf formatter "(or @[";
+    ApakEnum.pp_print_enum
+      ~pp_sep:(fun formatter () -> fprintf formatter "@ ")
+      (pp_expr_smtlib2 ~env ctx)
+      formatter
+      (BatList.enum (List.concat (List.map (flatten_sexpr Or) disjuncts)));
+    fprintf formatter "@])"
+  | Eq, [x; y] ->
+    fprintf formatter "(= @[%a %a@])"
+      (pp_expr_smtlib2 ~env ctx) x
+      (pp_expr_smtlib2 ~env ctx) y
+  | Leq, [x; y] ->
+    fprintf formatter "(<= @[%a %a@])"
+      (pp_expr_smtlib2 ~env ctx) x
+      (pp_expr_smtlib2 ~env ctx) y
+  | Lt, [x; y] ->
+    fprintf formatter "(< @[%a %a@])"
+      (pp_expr_smtlib2 ~env ctx) x
+      (pp_expr_smtlib2 ~env ctx) y
+  | Exists (name, typ), [psi] | Forall (name, typ), [psi] ->
+    let (quantifier_name, varinfo, psi) =
+      match label with
+      | Exists (_, _) ->
+        let (varinfo, psi) = flatten_existential psi in
+        ("exists", (name, typ)::varinfo, psi)
+      | Forall (_, _) ->
+        let (varinfo, psi) = flatten_universal psi in
+        ("forall", (name, typ)::varinfo, psi)
+      | _ -> assert false
+    in
+    let env =
+      List.fold_left (fun env (x,_) -> Env.push x env) env varinfo
+    in
+    fprintf formatter "(@[%s@ (" quantifier_name;
+    ApakEnum.pp_print_enum
+      ~pp_sep:pp_print_space
+      (fun formatter (name, typ) ->
+         fprintf formatter "(%s %a)" name pp_typ typ)
+      formatter
+      (BatList.enum varinfo);
+    fprintf formatter ")@ %a@])" (pp_expr_smtlib2 ~env ctx) psi
+  | Ite, [cond; bthen; belse] ->
+    fprintf formatter "(ite @[%a@ %a@ %a@])"
+      (pp_expr_smtlib2 ~env ctx) cond
+      (pp_expr_smtlib2 ~env ctx) bthen
+      (pp_expr_smtlib2 ~env ctx) belse
+  | _ -> failwith "pp_expr_smtlib2: ill-formed expression"
 
 module ExprHT = struct
   module HT = BatHashtbl.Make(Expr)

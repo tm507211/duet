@@ -85,6 +85,7 @@ let _ =
   | "mbp" ->
     let phi = load_formula Sys.argv.(i+1) in
     let psi = Quantifier.qe_mbp smt_ctx phi in
+    (*
     Z3.SMT.benchmark_to_smtstring
       smt_ctx#z3
       (Sys.argv.(i+1))
@@ -93,7 +94,20 @@ let _ =
       ""
       []
       (smt_ctx#of_formula psi)
-    |> print_endline
+    |> print_endline*)
+    let open Syntax in
+    fold_constants Symbol.Set.add psi Symbol.Set.empty
+    |> Symbol.Set.iter (fun sym ->
+        let typ_string = match typ_symbol ctx sym with
+          | `TyReal -> "Real"
+          | `TyInt -> "Int"
+          | `TyBool -> "Bool"
+          | _ -> assert false
+        in
+        Format.printf "(declare-const %s %s)@\n"
+          (string_of_symbol ctx sym)
+          typ_string);
+    Format.printf "(assert %a)@\n" (Syntax.pp_expr_smtlib2 ctx) psi
 
   | "sat-z3qe" ->
     let phi = load_formula Sys.argv.(i+1) in
