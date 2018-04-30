@@ -24,4 +24,5 @@ module MakeSolver (Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wi
   val check_solution : t -> [ `Sat | `Unsat | `Unknown ]
   val verify_solution : t -> [ `Valid | `Invalid | `Unknown ]
   val get_solution : t -> triple list
+  val simplify : triple -> triple list
 end with type triple = (Ctx.formula list) * Ltr.t * (Ctx.formula list)

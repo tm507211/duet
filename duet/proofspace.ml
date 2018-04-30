@@ -599,8 +599,9 @@ let construct solver assign_table trace add_triples =
   in
   add_triples hoare_solver trace;
   match Solver.verify_solution hoare_solver with
-  | `Valid -> go (Solver.get_solution hoare_solver)
+  | `Valid -> go (List.flatten (List.map Solver.simplify (Solver.get_solution hoare_solver)))
   | _ -> List.iter (fun triple -> logf ~level:`always "%a" Solver.pp_triple triple) (Solver.get_solution hoare_solver);
+         logf ~level:`always "%s" (SrkZ3.CHC.to_string (Solver.get_solver hoare_solver));
          Log.fatalf "Failed to find hoare triples"
 
 
@@ -1155,7 +1156,16 @@ let program_automaton file =
       [loc; loc_pred (init_vertex main)]
   in
   let add_single_transition lhs letter rhs =
-    PA.add_transition pa lhs (Letter.Set.singleton letter) rhs
+    if match Letter.block letter with
+       | `Transition tr ->
+          begin
+            match Syntax.destruct ctx (Tr.guard tr) with
+            | `Fls -> false
+            | _ -> true
+          end
+       | _ -> true
+    then PA.add_transition pa lhs (Letter.Set.singleton letter) rhs
+    else logf ~level:`always "ignored false gaurd: %a" Letter.pp letter
   in
 
   G.edges_e block_graph.graph |> BatEnum.iter (fun letter ->

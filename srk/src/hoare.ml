@@ -67,7 +67,7 @@ module MakeSolver(Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wit
         P(...) /\ Q(...) /\ x = 3 /\ y < x /\ transition.guard --> S(...)
    *)
   let register_triple solver (pre, ltr, post) =
-    (* logf ~level:`always "%a\n" pp_triple (pre, ltr, post); *)
+    (* logf ~level:`always "%a" pp_triple (pre, ltr, post); *)
     let rec register_formulas formulas =
       match formulas with
       | [] -> ()
@@ -152,4 +152,70 @@ module MakeSolver(Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wit
     | `Unsat -> `Invalid
     | `Unknown -> `Unknown
 
+  (* takes a triple and creates a new hoare triple for each conjunct of the post post.
+     Then removes irrelevant pre conditions using unsat core *)
+  let simplify (pre, letter, post) =
+    let rec conjuncts phi =
+      match Syntax.destruct srk phi with
+      | `Tru -> []
+      | `And conjs -> List.flatten (List.map conjuncts conjs)
+      | _ -> [phi]
+    in
+    let mk_and conjs =
+      match conjs with
+      | [] -> Ctx.mk_true
+      | [phi] -> phi
+      | _ -> Ctx.mk_and (List.flatten (List.map conjuncts conjs))
+    in
+    let pre = conjuncts (mk_and pre) in
+    let post = conjuncts (mk_and post) in
+    (* Minimal pre condition for post and transition's gaurd by finding unsat core of:
+       ~(pre /\ guard => post) <==> pre /\ gaurd /\ ~post *)
+    let min_pre post =
+      let trans = Ltr.transition_of letter in
+      (* Substitute var with it's expression if it appears in the transform *)
+      let subst_assign phi =
+        let subst sym =
+          match Var.of_symbol sym with
+          | Some v when Transition.mem_transform v trans -> (Transition.get_transform v trans)
+          | _ -> Ctx.mk_const sym
+        in
+        (substitute_const srk subst phi)
+      in
+      let post_ass = subst_assign post in
+      match pre, (Syntax.destruct srk post_ass) with
+      | [], _ -> [Ctx.mk_true]
+      | _, `Tru -> [Ctx.mk_true]
+      | _, _ ->
+         begin
+           let z3_solver = SrkZ3.mk_solver srk in
+           let assumptions = List.map (fun _ -> Ctx.mk_const (Ctx.mk_symbol `TyBool)) pre in
+           let rules = List.map2 (fun pre ass -> Syntax.mk_iff srk pre ass) pre assumptions in
+           z3_solver#add ((Ctx.mk_not post_ass) :: (Transition.guard trans) :: rules);
+           let rec get_pres ass pres core acc =
+             match ass, pres, core with
+             | a :: ass, p :: pres, c :: core ->
+                begin
+                  if (a = c) then
+                    get_pres ass pres core (p :: acc)
+                  else
+                    get_pres ass pres (c :: core) acc
+                end
+             | _, _, [] -> acc
+             | [], p, c -> assert false
+             | a, [], c -> assert false
+           in
+           match z3_solver#get_unsat_core assumptions with
+           | `Sat -> assert false
+           | `Unknown -> pre
+           | `Unsat core -> get_pres assumptions pre core []
+         end
+    in
+    let rec split posts acc =
+      match posts with
+      | [] -> acc
+      | post :: posts ->
+         split posts (((min_pre post), letter, [post]) :: acc)
+    in
+    split post []
 end
