@@ -208,8 +208,8 @@ module ILetter = struct
 
   let pp formatter (ltr, tid) =
     let open Format in
-    Letter.pp formatter ltr;
-    fprintf formatter " : %d" tid
+    fprintf formatter "[#%d] " tid;
+    Letter.pp formatter ltr
 
   let transition_of (ltr, tid) = Letter.transition_of tid ltr
 end
@@ -600,9 +600,9 @@ let construct solver assign_table trace add_triples =
   add_triples hoare_solver trace;
   match Solver.verify_solution hoare_solver with
   | `Valid -> go (List.flatten (List.map Solver.simplify (Solver.get_solution hoare_solver)))
-  | _ -> List.iter (fun triple -> logf ~level:`always "%a" Solver.pp_triple triple) (Solver.get_solution hoare_solver);
-         logf ~level:`always "%s" (SrkZ3.CHC.to_string (Solver.get_solver hoare_solver));
-         Log.fatalf "Failed to find hoare triples"
+  | _ -> logf ~level:`always "Using Interpolation as fail-safe";
+         construct_interp solver assign_table trace
+(*         Log.fatalf "Failed to find hoare triples" *)
 
 
 let construct_sequence solver assign_table trace =
@@ -692,7 +692,8 @@ let project_trace trace num_threads =
        | _ :: _ -> go trace
        | [] -> tid
   in
-  (traces, go trace)
+  let first = go trace in
+  (DA.map List.rev traces, first)
 
 let vars transitions num_threads =
   let module DA = BatDynArray in
@@ -722,6 +723,7 @@ let straight_line hsolver trace =
   let get_pred var_types =
     Ctx.mk_symbol (`TyFun (var_types, `TyBool))
   in
+  List.iter (fun ilet -> logf ~level:`always "%a" ILetter.pp ilet) trace;
   let rec go trace =
     match trace with
     | [] -> ()
@@ -754,184 +756,95 @@ let straight_line hsolver trace =
    | _ -> assert false
   ); preds
 
-let happens_before_evt trace threads =
+let happens_before_evt ?(least=true) trace num_threads =
   let module DA = BatDynArray in
   let module LM = Letter.Map in
   let module LS = PInt.Set in
-  (* events[tid][letter] = {i1, i2, i3} means that (letter, tid) occurs at index i1, i2, and i3 in the trace *)
-  let events = DA.init (DA.length threads) (fun _ -> LM.empty) in
-  List.iteri (fun ind (letter, tid) ->
-      let index_set = LM.find_default LS.empty letter (DA.get events tid) in
-      DA.set events tid (LM.add letter (LS.add ind index_set) (DA.get events tid))
-    ) trace;
-  (* pairs[tid][letter] = {a, b, c} means that (letter, tid) happens before all commands in thread a, b, c *)
-  let pairs = DA.init (DA.length threads) (fun _ -> LM.empty) in
-  (* This works because our only syntactic synchronization is due to forks *)
-  let rec go trace =
+  (* happens_before[tid][letter] = {a, b, c} means a fork happend in thread tid forking a,b,c (or a series of forks) *)
+  let happens_before = DA.init num_threads (fun _ -> LM.empty) in
+  (* Helper data structure to calculate happens_before sync[tid] = {a, b, c} if any (letter, tid) satisfies happens_before *)
+  let sync = DA.init num_threads (fun _ -> LS.empty) in
+  (* works on reversed trace *)
+  let rec go trace last_tid =
     match trace with
     | [] -> ()
     | (letter, tid) :: trace ->
-       match Letter.block letter with
-       | `Fork _ ->
-          begin
-            let (_, ntid) = List.hd trace in (* Initial of forked thread *)
-            let set = LM.find_default LS.empty letter (DA.get pairs tid) in
-            DA.set pairs tid (LM.add letter (LS.add ntid set) (DA.get pairs tid));
-            go (List.tl trace)
-          end
-       | _ -> go trace
+       begin
+         (match Letter.block letter with
+          | `Fork _ -> DA.set sync tid (LS.add last_tid (DA.get sync tid))
+          | _ -> ()
+         );
+         let set = DA.get sync tid in
+         (if LS.is_empty set then () else
+            DA.set happens_before tid (LM.add letter set (DA.get happens_before tid)));
+         go trace tid
+       end
   in
-  go trace;
-  (* Add transitive closure of forks *)
-  DA.iteri (fun tid hp ->
-      if tid == 0 then assert (hp == LM.empty) else
-        let rec go ids =
-          if LS.is_empty ids then ids else
-            let prop = List.fold_left (fun ids id ->
-                           LM.fold (fun _ x y -> LS.union x y) (DA.get pairs id) ids
-                         ) ids (LS.elements ids) in
-            let rest = LS.diff prop ids in
-            LS.union prop (go rest)
-        in
-        let trans = LM.map (fun ids -> go ids) hp in
-        DA.set pairs tid trans
-    ) pairs;
-  (* Add in all commands before forks to happens before relation *)
-  DA.iteri (fun tid thread ->
-      if tid == 0 then assert (thread == []) else
-        let rec go thread =
-          match thread with
-          | [] -> ()
-          | (letter, _) :: thread ->
-             let last_occ = LS.max_elt (LM.find letter (DA.get events tid)) in
-             let rec rest thread =
-               match thread with
-               | [] -> ()
-               | (ltr, _) :: thread ->
-                  (match Letter.block ltr with
-                   | `Fork _ ->
-                      begin
-                        let ltr_hp = LS.filter (fun ntid ->
-                                         match (DA.get threads ntid) with
-                                         | [] -> false
-                                         | (nltr, _ ) :: _ ->
-                                            let first_occ = LS.min_elt (LM.find nltr (DA.get events ntid)) in
-                                            last_occ < first_occ
-                                       ) (LM.find_default LS.empty ltr (DA.get pairs tid))
-                        in
-                        DA.set pairs tid (LM.add letter (LS.union ltr_hp (LM.find_default LS.empty letter (DA.get pairs tid))) (DA.get pairs tid))
-                      end
-                   | _ -> ()
-                  ); rest thread
-             in
-             rest thread; go thread (* do stupid n^2 loop -- should reverse thread to be linear *)
-        in
-        go thread
-  ) threads;
-  (* does Indexed Letter (x, t1) happens before thread t2 ? *)
-  (* Under our assumptions this is exactly the happens before relation when t1 != t2 *)
-  (fun (x, t1) (_, t2) -> LS.mem t2 (LM.find_default LS.empty x (DA.get pairs t1)))
-       
-let happens_before trace threads =
+  (* this works since the last command cannot be a fork *)
+  go (List.rev trace) 0;
+  (* does Indexed Letter (x, t1) happens before Indexed Letter (y, t2) ? *)
+  if least then
+    begin
+      (* if the last event of (x, t1) occurs before the first event (y, t2) and they are synchronized by a series of forks *)
+      (* events[tid][letter] = {i1, i2, i3} means that (letter, tid) occurs at index i1, i2, and i3 in the trace *)
+      let events = DA.init num_threads (fun _ -> LM.empty) in
+      List.iteri (fun ind (letter, tid) ->
+          let index_set = LM.find_default LS.empty letter (DA.get events tid) in
+          DA.set events tid (LM.add letter (LS.add ind index_set) (DA.get events tid))
+        ) trace;
+      (fun (x, t1) (y, t2) ->
+        (LS.mem t2 (LM.find_default LS.empty x (DA.get happens_before t1))) &&
+          begin
+            let x_max = LS.max_elt (LM.find x (DA.get happens_before t1)) in
+            let y_min = LS.max_elt (LM.find_default (LS.singleton 0) y (DA.get happens_before t2)) in
+            x_max < y_min
+          end)
+    end
+  else
+    (* if any event of (x, t1) occurs before any event (y, t2) and they are synchronized by a series of forks *)
+    (fun (x, t1) (_, t2) -> LS.mem t2 (LM.find_default LS.empty x (DA.get happens_before t1)))
+    
+let non_interference hsolver trace preds =
   let module DA = BatDynArray in
-  let module LM = Letter.Map in
-  let module LS = PInt.Set in
-  (* pairs[tid][letter] = {a, b, c} meaning (letter, tid) happens before all commands in thread a, b, and c *)
-  let pairs = DA.init (DA.length threads) (fun _ -> LM.empty) in
-  (* This works because our only syntactic synchronization is due to forks *)
-  let rec go trace =
-    match trace with
+  let hp = happens_before_evt trace (DA.length preds) in
+  let triples = Solver.get_symbolic hsolver in
+  let process_phi pre letter =
+    Memo.memo (fun phis -> Solver.register_triple hsolver (List.append pre phis, letter, phis))
+  in
+  let rec go trips =
+    match trips with
     | [] -> ()
-    | (letter, tid) :: trace ->
-       match Letter.block letter with
-       | `Fork _ ->
-          begin
-            let (_, ntid) = List.hd trace in (* Initial of forked thread *)
-            let set = LM.find_default LS.empty letter (DA.get pairs tid) in
-            DA.set pairs tid (LM.add letter (LS.add ntid set) (DA.get pairs tid));
-            go (List.tl trace)
-          end
-       | _ -> go trace
-  in
-  go trace;
-  (* Add transitive closure of forks *)
-  DA.iteri (fun tid hp ->
-      if tid == 0 then assert (hp == LM.empty) else
-        let rec go ids =
-          if LS.is_empty ids then ids else
-            let prop = List.fold_left (fun ids id ->
-                           LM.fold (fun _ x y -> LS.union x y) (DA.get pairs id) ids
-                         ) ids (LS.elements ids) in
-            let rest = LS.diff prop ids in
-            LS.union prop (go rest)
-        in
-        let trans = LM.map (fun ids -> go ids) hp in
-        DA.set pairs tid trans
-    ) pairs;
-  (* Add in all commands before forks to happens before relation *)
-  DA.iteri (fun tid thread ->
-      if tid == 0 then assert (thread == []) else
-        let rec go thread =
-          match thread with
-          | [] -> ()
-          | (letter, _) :: thread ->
-             let rec rest thread =
-               match thread with
-               | [] -> ()
-               | (ltr, _) :: thread ->
-                  (match Letter.block ltr with
-                   | `Fork _ ->
-                      begin
-                        let ltr_hp = LM.find_default LS.empty ltr (DA.get pairs tid) in
-                        DA.set pairs tid (LM.add letter (LS.union ltr_hp (LM.find_default LS.empty letter (DA.get pairs tid))) (DA.get pairs tid))
-                      end
-                   | _ -> ()
-                  ); rest thread
-             in
-             rest thread; go thread (* do stupid n^2 loop -- should reverse thread to be linear *)
-        in
-        go thread
-  ) threads;
-  (* does Indexed Letter (x, t1) happens before thread t2 ? *)
-  (* Under our assumptions this is exactly the happens before relation when t1 != t2 *)
-  (fun (x, t1) (_, t2) -> LS.mem t2 (LM.find_default LS.empty x (DA.get pairs t1)))
-
-let strong_non_interference hsolver trace preds =
-  let module DA = BatDynArray in
-  let num_threads = (DA.length preds) - 1 in
-  let (threads, _) = project_trace trace num_threads in
-  let hp = happens_before_evt trace threads in
-  DA.iteri (fun tid thread ->
-      if tid == 0 then assert (thread == []) else
-        let thread = List.rev thread in
-        let tid_preds = List.rev (DA.get preds tid) in
-        let rec go thread tpreds =
-          match thread, tpreds with
-          | ((letter, _) :: thread, pre :: tpreds) ->
+    | (pre, (l1, t1), _) :: trips ->
+       let handle_phis = process_phi pre (l1, t1) in
+       List.iter (fun (pre, (l2, t2), post) ->
+           if t1 != t2 && hp (l1, t1) (l2, t2) then
              begin
-               DA.iteri (fun ntid npreds ->
-                   if ntid == 0 || ntid == tid then () else
-                     let rec go npreds =
-                       match npreds with
-                       | [] -> ()
-                       | pre2 :: npreds ->
-                          if (hp (letter, tid) (letter, ntid)) then () else
-                            Solver.register_triple hsolver ([pre; pre2], (letter, tid), [pre2]);
-                          go npreds
-                     in
-                     go npreds
-                 ) preds;
-               go thread tpreds
+               handle_phis pre;
+               handle_phis post
              end
-          | x, y -> (* logf ~level:`always "%d %d" (List.length x) (List.length y); *) assert (x = [] && (List.length y) <= 2)
-        in
-        go thread tid_preds
-    ) threads
+         ) triples
+  in
+  go triples
 
 let construct_owicki_gries_sequence solver assign_table trace =
+  let trace =
+    let id : int ref = ref 0 in
+    let rec go trace rename =
+      match trace with
+      | [] -> []
+      | (letter, tid) :: trace ->
+         let rename =
+           match Letter.block letter with
+           | `Initial -> incr id; PInt.Map.add tid (!id) rename
+           | _ -> rename
+         in
+         (letter, PInt.Map.find tid rename) :: (go trace rename)
+    in
+    go trace PInt.Map.empty
+  in
   let add_triples hoare_solver trace =
     let preds = straight_line hoare_solver trace in
-    strong_non_interference hoare_solver trace preds
+    non_interference hoare_solver trace preds
   in
   construct solver assign_table trace add_triples
 

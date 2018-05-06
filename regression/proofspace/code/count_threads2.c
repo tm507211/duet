@@ -4,11 +4,12 @@ int count;
 
 void* thread(void *arg) {
     count = count + 1;
+    return NULL;
 }
 
 void main() {
     pthread_t t;
-    int num = 3;
+    int num = 2;
     int i;
     count = 0;
     //    __VERIFIER_assume(num >= 0);

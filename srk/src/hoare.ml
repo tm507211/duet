@@ -138,6 +138,9 @@ module MakeSolver(Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wit
     in
     List.rev (DA.fold_left get_triple [] solver.triples)
 
+  let get_symbolic solver =
+    DA.to_list solver.triples
+
   let verify_solution solver =
     match CHC.check solver.solver [] with
     | `Sat ->

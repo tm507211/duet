@@ -24,7 +24,11 @@ void main() {
     pthread_t th;
 
     s = t = 0;
-    pthread_create(&th, NULL, thread, NULL);
-    pthread_create(&th, NULL, thread, NULL);
-    pthread_create(&th, NULL, thread, NULL);
+
+    int num = __VERIFIER_nondet();
+    __VERIFIER_assume(num > 0);
+
+    for (int i = 0; i < num; ++i){
+      pthread_create(&th, NULL, thread, NULL);
+    }
 }

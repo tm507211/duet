@@ -15,11 +15,8 @@ void* thread(void *arg) {
 
 void main() {
     pthread_t t;
-    //    while(rand()){
-    
-    pthread_create(&t, NULL, thread, NULL);
-    pthread_create(&t, NULL, thread, NULL);
-    //    pthread_create(&t, NULL, thread, NULL);
-    //    pthread_create(&t, NULL, thread, NULL);
-	//}
+
+    while(rand()){
+        pthread_create(&t, NULL, thread, NULL);
+    }
 }
