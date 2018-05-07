@@ -771,7 +771,11 @@ let happens_before_evt ?(least=true) trace num_threads =
     | (letter, tid) :: trace ->
        begin
          (match Letter.block letter with
-          | `Fork _ -> DA.set sync tid (LS.add last_tid (DA.get sync tid))
+          | `Fork _ ->
+             begin
+               let set = LS.add last_tid (DA.get sync tid) in
+               DA.set sync tid (LS.union (DA.get sync last_tid) set)
+             end
           | _ -> ()
          );
          let set = DA.get sync tid in
@@ -817,12 +821,13 @@ let non_interference hsolver trace preds =
     | (pre, (l1, t1), _) :: trips ->
        let handle_phis = process_phi pre (l1, t1) in
        List.iter (fun (pre, (l2, t2), post) ->
-           if t1 != t2 && hp (l1, t1) (l2, t2) then
+           if t1 != t2 && not (hp (l1, t1) (l2, t2)) then
              begin
                handle_phis pre;
                handle_phis post
              end
-         ) triples
+         ) triples;
+       go trips
   in
   go triples
 
