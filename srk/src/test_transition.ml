@@ -294,6 +294,7 @@ module LtrTrans = struct
   type trans = t
   let hash trans = Hashtbl.hash trans
   let transition_of trans = trans
+  let default = one
 end
 
 let check_hoare solver =

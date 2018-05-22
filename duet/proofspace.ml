@@ -600,6 +600,7 @@ let construct solver assign_table trace add_triples =
     | _ -> ()
   in
   add_triples hoare_solver trace;
+  Solver.reduce_vars hoare_solver;
   match Solver.verify_solution hoare_solver with
   | `Valid -> go (List.flatten (List.map Solver.simplify (Solver.get_solution hoare_solver)))
   | _ -> (* logf ~level:`always "Using Interpolation as fail-safe";
@@ -607,7 +608,6 @@ let construct solver assign_table trace add_triples =
      logf ~level:`info "";
      List.iter (fun trip -> logf ~level:`info "%a" Solver.pp_triple trip) (Solver.get_symbolic hoare_solver);
      Log.fatalf "Failed to find hoare triples"
-
 
 let construct_sequence solver assign_table trace =
   let add_triples hoare_solver trace =

@@ -26,4 +26,6 @@ module MakeSolver (Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wi
   val get_solution : t -> triple list
   val get_symbolic : t -> triple list
   val simplify : triple -> triple list
+  val reduce_vars : t -> unit
+                                  
 end with type triple = (Ctx.formula list) * Ltr.t * (Ctx.formula list)
