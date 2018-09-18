@@ -1,4 +1,3 @@
-(** Numerical abstract domains *)
 open Apron
 open BatPervasives
 open Syntax
@@ -234,7 +233,6 @@ let join x y = common_env_prop (man x.prop) Abstract0.join x y
 let meet x y = common_env_prop (man x.prop) Abstract0.meet x y
 
 let widen x y = common_env_prop (man x.prop) Abstract0.widening x y
-
 
 let exists man p x =
   let intdim = ref 0 in

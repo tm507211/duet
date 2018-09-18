@@ -34,7 +34,9 @@ end
 module T = struct
   module SemiRing = Transition.Make(Ctx)(V)
   include SemiRing
-  module I = SemiRing.Iter(Iteration.Split(Iteration.WedgeVector))
+  open Iteration
+  open SolvablePolynomial
+  module I = SemiRing.Iter(MakeDomain(Split(ProductWedge(SolvablePolynomial)(WedgeGuard))))
   let star = I.star
 end
 
@@ -62,7 +64,7 @@ let assert_post tr phi =
   let pathcond =
     T.guard (T.mul tr (T.assume not_post))
   in
-  if smt_ctx#is_sat pathcond != `Unsat then
+  if Wedge.is_sat srk pathcond != `Unsat then
     assert_failure (Printf.sprintf "%s\n is not a post-condition of\n%s"
                       (Formula.show srk phi)
                       (T.show tr))
@@ -80,7 +82,6 @@ let mk_while cond body =
   T.mul
     (T.star (mk_block ((T.assume cond)::body)))
     (T.assume (Ctx.mk_not cond))
-
 
 let degree1 () =
   let tr =
@@ -148,6 +149,31 @@ let degree3 () =
   let post =
     let open Infix in
     x = n*n*n
+  in
+  assert_post tr post
+
+let gauss_sum () =
+  let tr =
+    let open Infix in
+    mk_block [
+      T.assume ((int 0) <= n);
+      T.assign "i" (int 0);
+      T.assign "x" (int 0);
+      mk_while (i < n) [
+        T.assume ((int 0) <= n); (* Needed w/o forward inv gen *)
+        T.assume ((int 0) <= i); (* Needed w/o forward inv gen *)
+        T.assign "j" i;
+        T.assign "i" (i + (int 1));
+        mk_while (j < n) [
+          T.assign "j" (j + (int 1));
+          T.assign "x" (x + (int 1));
+        ]
+      ]
+    ]
+  in
+  let post =
+    let open Infix in
+    (int 2) * x <= (n*(n+(int 1)))
   in
   assert_post tr post
 
@@ -287,7 +313,6 @@ let interpolate2 () =
     check_interpolant path post itp
   | _ -> assert_failure "Invalid post-condition"
 
-
 module LtrTrans = struct
   include Transition.Make(Ctx)(V)
 
@@ -345,10 +370,30 @@ let hoare2 () =
   Solver.register_triple solver ([r(x,y)], T.assume (x < (int 0)), [fls]);
   check_hoare solver
 
+let negative_eigenvalue () =
+  let tr =
+    let open Infix in
+    mk_block [
+      T.assume ((int 0) < x);
+      T.assume ((int 0) < y);
+      T.assign "n" (x + y);
+      T.assign "k" (int 0);
+      T.assume ((int 0) < y);
+      mk_while ((int 0) < x && (int 0) <= y) [
+        T.parallel_assign [("x", y);
+                           ("y", x - (int 1));
+                           ("k", k + (int 1))]
+      ]
+    ]
+  in
+  let post = mk_leq srk k n in
+  assert_post tr post
+
 let suite = "Transition" >::: [
     "degree1" >:: degree1;
     "degree2" >:: degree2;
     "degree3" >:: degree3;
+    "gauss_sum" >:: gauss_sum;
     "inc_nondet" >:: inc_nondet;
     "split" >:: split;
     "split2" >:: split2;
@@ -357,4 +402,5 @@ let suite = "Transition" >::: [
     "interpolate2" >:: interpolate2;
     "hoare1" >:: hoare1;
     "hoare2" >:: hoare2;
+    "negative_eigenvalue" >:: negative_eigenvalue;
   ]

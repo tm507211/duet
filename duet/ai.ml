@@ -559,6 +559,7 @@ module ApronInterpretation = struct
         let pos = match offset with
           | OffsetFixed x -> Texpr0.Cst (Coeff.s_of_int x)
           | OffsetUnknown -> havoc_int
+          | OffsetNone -> Texpr0.Cst (Coeff.s_of_int 0)
         in
         let width = typ_width (Varinfo.get_type v) in
         let p =
@@ -624,7 +625,7 @@ module ApronInterpretation = struct
      meet of the constraint and the value *)
   and interp_bool expr av =
     match expr with
-    | And (a, b) -> meet (interp_bool a av) (interp_bool b av)
+    | And (a, b) -> interp_bool b (interp_bool a av)
     | Or (a, b) -> join (interp_bool a av) (interp_bool b av)
 
     (* Apron handles disequality inaccurately.  This seems to be a reasonable
@@ -678,8 +679,38 @@ module ApronInterpretation = struct
     in
     { w with value = value }
 
+  let widen_thresholds thresholds x y =
+    let w = widen_preserve_leq x y in
+    let f a thresh value =
+      let texpr = (* a - thresh *)
+        Texpr0.of_expr
+          (int_binop Minus
+             (Texpr0.Cst (Coeff.s_of_int thresh))
+             (Texpr0.Dim a))
+      in
+      let tcons = Tcons0.make texpr Tcons0.SUPEQ in
+      if (Abstract0.sat_tcons (get_man()) x.value tcons
+          && Abstract0.sat_tcons (get_man()) y.value tcons
+          && not (Abstract0.sat_tcons (get_man()) value tcons))
+      then Abstract0.meet_tcons_array (get_man()) value [| tcons |]
+      else value
+    in
+    let value =
+      let g _ d value =
+        match d with
+        | VInt a ->
+          List.fold_left (fun value thresh ->
+              f a thresh value)
+            value
+            thresholds
+        | _ -> value
+      in
+      Env.fold g w.env w.value
+    in
+    { w with value = value }
+
   let assert_true bexpr av = assert_true (Bexpr.dnf bexpr) av
-  let interp_bool bexpr av = interp_bool (Bexpr.dnf bexpr) av
+  let interp_bool bexpr av = interp_bool bexpr av
 
   (* Assign pointer a freshly allocated chunk of memory of the given size
      within the given abstract value.  If !CmdLine.fail_malloc is set, then

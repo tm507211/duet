@@ -1,3 +1,5 @@
+(** Logging *)
+
 (** Verbosity levels - from BatLog *)
 type level = [ `trace | `debug | `info | `warn | `error | `fatal | `always ]
 let level_leq x y =
@@ -83,7 +85,7 @@ include Make(struct let name = "default" end)
 let debug_formatter =
   let chan = stdout in
   let out buf pos len =
-    if !debug_mode then output chan buf pos len
+    if !debug_mode then output_substring chan buf pos len
     else ()
   in
   let flush () = flush chan in

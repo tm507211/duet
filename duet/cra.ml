@@ -5,16 +5,15 @@ open CfgIr
 open BatPervasives
 
 module RG = Interproc.RG
+module WG = WeightedGraph
 module G = RG.G
 module Ctx = Syntax.MakeSimplifyingContext ()
-let ark = Ctx.context
+module Int = SrkUtil.Int
+let srk = Ctx.context
 
 include Log.Make(struct let name = "cra" end)
 
-let forward_inv_gen = ref false
-let use_ocrs = ref false
-let split_loops = ref false
-let matrix_rec = ref false
+let forward_inv_gen = ref true
 let dump_goals = ref false
 let nb_goals = ref 0
 
@@ -29,156 +28,11 @@ let dump_goal loc path_condition =
     let chan = Pervasives.open_out filename in
     let formatter = Format.formatter_of_out_channel chan in
     logf ~level:`always "Writing goal formula to %s" filename;
-    Syntax.pp_smtlib2 ark formatter path_condition;
+    Syntax.pp_smtlib2 srk formatter path_condition;
     Format.pp_print_newline formatter ();
     Pervasives.close_out chan;
     incr nb_goals
   end
-
-let _ =
-  CmdLine.register_config
-    ("-cra-forward-inv",
-     Arg.Set forward_inv_gen,
-     " Forward invariant generation");
-  CmdLine.register_config
-    ("-cra-split-loops",
-     Arg.Set split_loops,
-     " Turn on loop splitting");
-  CmdLine.register_config
-    ("-use-ocrs",
-     Arg.Set use_ocrs,
-     " Use OCRS for recurrence solving");
-  CmdLine.register_config
-    ("-cra-matrix",
-     Arg.Set matrix_rec,
-     "  Matrix recurrences");
-  CmdLine.register_config
-    ("-dump-goals",
-     Arg.Set dump_goals,
-     " Output goal assertions in SMTLIB2 format")
-
-(* Decorate the program with numerical invariants *)
-
-module MakeDecorator(M : sig
-    type t
-    val manager_alloc : unit -> t Apron.Manager.t
-  end) = struct
-
-  module ApronI =
-    Ai.ApronInterpretation
-  module I = Ai.IExtra(ApronI)
-
-  module SCCG = Loop.SccGraph(G)
-  let enum_loop_headers rg = SCCG.enum_headers (SCCG.construct rg)
-
-  module NA = struct
-    type absval = I.t
-    type st = unit
-    module G = Interproc.RG.G
-    let nonvariable = function
-      | Variable _ -> false
-      | Deref _ -> true
-    let safe_cyl av aps = I.cyl (I.inject av aps) aps
-    let transfer _ flow_in def =
-      let res = 
-        match def.dkind with
-        | Call (None, AddrOf (Variable (func, OffsetFixed 0)), []) ->
-          if CfgIr.defined_function func (CfgIr.get_gfile()) then
-            (* Havoc the global variables *)
-            let open ApronI in
-            let global_aps =
-              Env.fold
-                (fun ap _ aps ->
-                   if AP.is_global ap then AP.Set.add ap aps else aps)
-                flow_in.env
-                AP.Set.empty
-            in
-            I.cyl flow_in global_aps
-          else flow_in (* Treat undefined functions as no-ops *)
-        | Assign (var, expr) ->
-          begin
-            match resolve_type (Var.get_type var) with
-            | Int _ | Pointer _ | Dynamic ->
-              if AP.Set.exists nonvariable (Aexpr.get_uses expr)
-              then safe_cyl flow_in (AP.Set.singleton (Variable var))
-              else I.transfer def (I.inject flow_in (Def.get_uses def))
-            | _ -> flow_in
-          end
-        | Store (lhs, _) ->
-          (* Havoc all the variables lhs could point to *)
-          let open PointerAnalysis in
-          let add_target memloc set = match memloc with
-            | (MAddr v, offset) -> AP.Set.add (Variable (v, offset)) set
-            | _, _ -> set
-          in
-          let vars = MemLoc.Set.fold add_target (resolve_ap lhs) AP.Set.empty in
-          safe_cyl flow_in vars
-        | Assume bexpr | Assert (bexpr, _) ->
-          if AP.Set.exists nonvariable (Bexpr.get_uses bexpr)
-          then flow_in
-          else I.transfer def (I.inject flow_in (Def.get_uses def))
-        | Builtin (Alloc (v, _, _)) ->
-          safe_cyl flow_in (AP.Set.singleton (Variable v))
-        | Initial -> I.transfer def flow_in
-        | _ -> flow_in
-      in
-      res
-    let flow_in _ graph val_map v =
-      let add_pred v value = I.join (val_map v) value in
-      G.fold_pred add_pred graph v (I.bottom AP.Set.empty)
-    let join _ _ x y =
-      let newv = I.join x y in
-      if I.equal x newv then None else Some newv
-    let widen =
-      let f _ _ old_val new_val =
-        let wide_val = I.widen old_val new_val in
-        if I.equal old_val wide_val then None else Some wide_val
-      in
-      Some f
-    let name = "Numerical analysis"
-    let pp_vertex = Def.pp
-    let pp_absval = I.pp
-  end
-  module NumAnalysis = Solve.Mk(NA)
-
-  let decorate rg =
-    let decorate_block block body =
-      let result = NumAnalysis.empty_result () body in
-      let entry = RG.block_entry rg block in
-      NumAnalysis.init_result result body (fun d ->
-          if Def.equal entry d
-          then I.top AP.Set.empty
-          else I.bottom AP.Set.empty);
-      NumAnalysis.solve result (G.fold_vertex (fun x xs -> x::xs) body []);
-      let f body v =
-        let value = NumAnalysis.output result v in
-        let bexpr = ApronI.bexpr_of_av value in
-        let def = Def.mk (Assume bexpr) in
-        logf "Found invariant at %a: %a" Def.pp v ApronI.pp value;
-        G.split body v ~pred:v ~succ:def
-      in
-      BatEnum.fold f body (enum_loop_headers body)
-    in
-    RG.map decorate_block rg
-end
-
-type abstract_domain = Box | Octagon | Polyhedron
-let default_domain = ref Box
-
-let decorate rg =
-  match !default_domain with
-  | Box ->
-    let module D = MakeDecorator(Box) in
-    D.decorate rg
-  | Octagon ->
-    let module D = MakeDecorator(Oct) in
-    D.decorate rg
-  | Polyhedron ->
-    let module D = MakeDecorator(struct
-        type t = Polka.loose Polka.t
-        let manager_alloc = Polka.manager_alloc_loose
-      end) in
-    D.decorate rg
 
 let tr_typ typ = match resolve_type typ with
   | Int _   -> `TyInt
@@ -203,7 +57,7 @@ type value =
     [@@deriving ord]
 
 module Value = struct
-  type t = value
+  type t = value [@@deriving ord]
   let hash = function
     | VVal v -> Hashtbl.hash (0, Var.hash v)
     | VPos v -> Hashtbl.hash (1, Var.hash v)
@@ -220,7 +74,6 @@ let map_value f = function
   | VWidth v -> VWidth (f v)
 
 module V = struct
-
   module I = struct
     type t = value [@@deriving ord]
     let pp formatter = function
@@ -256,52 +109,20 @@ module V = struct
       Some (Hashtbl.find sym_to_var sym)
     else
       None
+
+  let is_global = Var.is_global % var_of_value
 end
 
 module K = struct
   include Transition.Make(Ctx)(V)
-  module DPoly = struct
-    module WV = Iteration.WedgeVector
-    module SplitWV = Iteration.Split(WV)
-    include Iteration.Sum(WV)(SplitWV)
-    let abstract_iter ?(exists=fun x -> true) ark phi symbols =
-      if !split_loops then
-        right (SplitWV.abstract_iter ~exists ark phi symbols)
-      else
-        left (WV.abstract_iter ~exists ark phi symbols)
-  end
-  module DOcrs = struct
-    module WV = Iteration.WedgeVectorOCRS
-    module SplitWV = Iteration.Split(WV)
-    include Iteration.Sum(WV)(SplitWV)
-    let abstract_iter ?(exists=fun x -> true) ark phi symbols =
-      if !split_loops then
-        right (SplitWV.abstract_iter ~exists ark phi symbols)
-      else
-        left (WV.abstract_iter ~exists ark phi symbols)
-  end
-  module DMatrix = struct
-    module WM = Iteration.WedgeMatrix
-    module SplitWM = Iteration.Split(WM)
-    include Iteration.Sum(WM)(SplitWM)
-    let abstract_iter ?(exists=fun x -> true) ark phi symbols =
-      if !split_loops then
-        right (SplitWM.abstract_iter ~exists ark phi symbols)
-      else
-        left (WM.abstract_iter ~exists ark phi symbols)
-  end
-  module D = struct
-    module Vec = Iteration.Sum(DPoly)(DOcrs)
-    include Iteration.Sum(Vec)(DMatrix)
-    let abstract_iter ?(exists=fun x -> true) ark phi symbols =
-      if !matrix_rec then
-        right (DMatrix.abstract_iter ~exists ark phi symbols)
-      else if !use_ocrs then
-        left (Vec.right (DOcrs.abstract_iter ~exists ark phi symbols))
-      else
-        left (Vec.left (DPoly.abstract_iter ~exists ark phi symbols))
-  end
-  module I = Iter(D)
+  open Iteration
+  open SolvablePolynomial
+  module SPOne = SumWedge (SolvablePolynomial) (SolvablePolynomialOne) ()
+  module SPG = ProductWedge (SPOne) (WedgeGuard)
+  module SPPeriodicRational = Sum (SPG) (PresburgerGuard) ()
+  module SPSplit = Sum (SPPeriodicRational) (Split(SPPeriodicRational)) ()
+
+  module I = Iter(MakeDomain(SPSplit))
 
   let star x = Log.time "cra:star" I.star x
 
@@ -316,7 +137,6 @@ module K = struct
     else if is_one y then x
     else mul x y
 end
-module A = Interproc.MakePathExpr(K)
 
 type ptr_term =
   { ptr_val : Ctx.term;
@@ -368,7 +188,13 @@ let term_binop op left right = match left, op, right with
   | (TPointer left, op, TPointer right) ->
     TInt (int_binop op left.ptr_val right.ptr_val)
 
-let typ_has_offsets typ = is_pointer_type typ || typ = Concrete Dynamic
+let typ_has_offsets typ = match resolve_type typ with
+  | Pointer _ | Func _ | Dynamic -> true
+  | _ -> false
+
+let is_int_array typ = match resolve_type typ with
+  | Array (Concrete (Int _), _) -> true
+  | _ -> false
 
 let nondet_const name typ = Ctx.mk_const (Ctx.mk_symbol ~name typ)
 
@@ -425,35 +251,154 @@ let tr_bexpr bexpr =
   in
   Bexpr.fold alg bexpr
 
+(* Populate table mapping variables to the offsets of that variable that
+   appear in the program.  Must be called before calling weight *)
+let offset_table = Varinfo.HT.create 991
+let get_offsets v =
+  try Varinfo.HT.find offset_table v
+  with Not_found -> Int.Set.empty
+
+let populate_offset_table file =
+  let add_offset (v, offset) =
+    match offset with
+    | OffsetUnknown -> ()
+    | OffsetNone -> ()
+    | OffsetFixed k ->
+      Varinfo.HT.modify_def Int.Set.empty v (Int.Set.add k) offset_table
+  in
+  let rec aexpr e = match e with
+    | Cast (_, e) | UnaryOp (_, e, _) -> aexpr e
+    | BinaryOp (e1, _, e2, _) -> aexpr e1; aexpr e2
+    | AddrOf a | AccessPath a -> ap a
+    | BoolExpr b -> bexpr b
+    | Havoc _ | Constant _ -> ()
+  and ap a = match a with
+    | Variable v -> add_offset v
+    | Deref e -> aexpr e
+  and bexpr b = match b with
+    | And (b1, b2) | Or (b1, b2) -> bexpr b1; bexpr b2
+    | Atom (_, e1, e2) -> aexpr e1; aexpr e2
+  in
+  file |> CfgIr.iter_defs (fun def ->
+      match def.dkind with
+      | Assign (v, e) -> add_offset v; aexpr e
+      | Store (a, e) -> ap a; aexpr e;
+      | Call (lhs, a, args) ->
+        begin match lhs with
+          | Some v -> add_offset v
+          | None -> ();
+        end;
+        aexpr a;
+        List.iter aexpr args;
+      | Assume b -> bexpr b
+      | Initial -> ()
+      | Assert (b, _) -> bexpr b
+      | AssertMemSafe (a, _) -> aexpr a
+      | Return (Some a) -> aexpr a
+      | Return None -> ()
+      | Builtin (Alloc (v, a, _)) -> add_offset v; aexpr a
+      | Builtin (Free a) -> aexpr a
+      | Builtin (Fork (lhs, a, args)) ->
+        begin match lhs with
+          | Some v -> add_offset v
+          | None -> ();
+        end;
+        aexpr a;
+        List.iter aexpr args
+      | Builtin (Acquire a) | Builtin (Release a) -> aexpr a
+      | Builtin AtomicEnd | Builtin AtomicBegin | Builtin Exit -> ())
+
+let rec record_assign (lhs : varinfo) loff rhs roff fields =
+  fields |> List.map (fun { fityp; fioffset } ->
+      match resolve_type fityp with
+      | Record { rfields } ->
+        record_assign lhs (loff+fioffset) rhs (roff+fioffset) rfields
+      | Pointer _ | Func _ | Dynamic ->
+        let lhs = (lhs, OffsetFixed (loff + fioffset)) in
+        begin match tr_expr (AccessPath (Variable (rhs, OffsetFixed roff))) with
+          | TPointer rhs ->
+            BatList.reduce K.mul [
+              K.assign (VVal lhs) rhs.ptr_val;
+              K.assign (VPos lhs) rhs.ptr_pos;
+              K.assign (VWidth lhs) rhs.ptr_width;
+            ]
+          | TInt tint -> begin
+              BatList.reduce K.mul [
+                K.assign (VVal lhs) tint;
+                K.assign (VPos lhs) (nondet_const "type_err" `TyInt);
+                K.assign (VWidth lhs) (nondet_const "type_err" `TyInt)
+              ]
+            end
+        end
+      | _ ->
+        let lhs = (lhs, OffsetFixed (loff+fioffset)) in
+        let rhs = tr_expr_val (AccessPath (Variable (rhs, OffsetFixed (fioffset+roff)))) in
+        K.assign (VVal lhs) rhs)
+  |> BatList.reduce K.mul
 
 let weight def =
   let open K in
   match def.dkind with
   | Assume phi | Assert (phi, _) -> K.assume (tr_bexpr phi)
   | Assign (lhs, rhs) ->
-    if typ_has_offsets (Var.get_type lhs) then begin
-      match tr_expr rhs with
-      | TPointer rhs ->
-        BatList.reduce K.mul [
-          K.assign (VVal lhs) rhs.ptr_val;
-          K.assign (VPos lhs) rhs.ptr_pos;
-          K.assign (VWidth lhs) rhs.ptr_width;
-        ]
-      | TInt tint -> begin
-          (match Var.get_type lhs, rhs with
-           | (_, Havoc _) | (Concrete Dynamic, _) -> ()
-           | _ -> Log.errorf "Ill-typed pointer assignment: %a" Def.pp def);
-          BatList.reduce K.mul [
-            K.assign (VVal lhs) tint;
-            K.assign (VPos lhs) (nondet_const "type_err" `TyInt);
-            K.assign (VWidth lhs) (nondet_const "type_err" `TyInt)
-          ]
+    let lhs_typ = resolve_type (Var.get_type lhs) in
+    let rhs_typ = resolve_type (Aexpr.get_type rhs) in
+    begin match lhs_typ, rhs_typ with
+      | Record { rfields }, _ | _, Record { rfields } ->
+        let lhs, loff = match lhs with
+          | (lhs, OffsetFixed k) -> (lhs, k)
+          | (lhs, OffsetNone) -> (lhs, 0)
+          | _ -> invalid_arg "Unsupported record assignment"
+        in
+        begin match rhs with
+          | AccessPath (Variable (v, OffsetFixed k)) ->
+            record_assign lhs loff v k rfields
+          | AccessPath (Variable (v, OffsetNone)) ->
+            record_assign lhs loff v 0 rfields
+          | _ -> invalid_arg "Unsupported record assignment"
         end
-    end else K.assign (VVal lhs) (tr_expr_val rhs)
-  | Store (lhs, _) ->
+      | Pointer _, _ | Func _, _ | Dynamic, _ ->
+        begin match tr_expr rhs with
+          | TPointer rhs ->
+            BatList.reduce K.mul [
+              K.assign (VVal lhs) rhs.ptr_val;
+              K.assign (VPos lhs) rhs.ptr_pos;
+              K.assign (VWidth lhs) rhs.ptr_width;
+            ]
+          | TInt tint -> begin
+              (match Var.get_type lhs, rhs with
+               | (_, Havoc _) | (Concrete Dynamic, _) -> ()
+               | _ -> Log.errorf "Ill-typed pointer assignment: %a" Def.pp def);
+              BatList.reduce K.mul [
+                K.assign (VVal lhs) tint;
+                K.assign (VPos lhs) (nondet_const "type_err" `TyInt);
+                K.assign (VWidth lhs) (nondet_const "type_err" `TyInt)
+              ]
+            end
+        end
+      | _, _ -> K.assign (VVal lhs) (tr_expr_val rhs)
+    end
+  | Store (lhs, rhs) ->
     (* Havoc all the variables lhs could point to *)
     let open PointerAnalysis in
+    let rhs_val, rhs_pos, rhs_width =
+      match tr_expr rhs with
+      | TPointer rhs -> rhs.ptr_val, rhs.ptr_pos, rhs.ptr_width
+      | TInt tint -> tint, (nondet_const "type_err" `TyInt), (nondet_const "type_err" `TyInt)
+    in
     let add_target memloc tr = match memloc with
+      | (MAddr v, offset) when is_int_array (Varinfo.get_type v) ->
+        begin
+          match offset with
+          | OffsetUnknown ->
+            Int.Set.fold (fun offset tr ->
+                K.add tr (K.assign (VVal (v, OffsetFixed offset)) rhs_val))
+              (get_offsets v)
+              K.one (* weak update *)
+            |> K.mul tr
+          | _ ->
+            K.mul tr (K.assign (VVal (v,offset)) rhs_val)
+        end
       | (MAddr v, offset) ->
         if typ_has_offsets (Var.get_type (v,offset)) then begin
           BatList.reduce K.mul [
@@ -483,85 +428,180 @@ let weight def =
     Log.errorf "No translation for definition: %a" Def.pp def;
     assert false
 
+type 'a label = 'a WeightedGraph.label =
+  | Weight of 'a
+  | Call of int * int
+[@@deriving ord]
+
+type klabel = K.t label [@@deriving ord]
+
+module TS = TransitionSystem.Make(Ctx)(V)(K)
+
+(* Weight-labeled graph module suitable for ocamlgraph *)
+module TSG = struct
+  type t = TS.t
+
+  module V = struct
+    include SrkUtil.Int
+    type label = int
+    let label x = x
+    let create x = x
+  end
+
+  module E = struct
+    type label = klabel
+    type vertex = int
+    type t = int * klabel * int [@@deriving ord]
+    let src (x, _, _) = x
+    let dst (_, _, x) = x
+    let label (_, x, _) = x
+    let create x y z = (x, y, z)
+  end
+
+  let iter_edges_e = WG.iter_edges
+  let iter_vertex = WG.iter_vertex
+  let iter_succ f tg v =
+    WG.U.iter_succ f (WG.forget_weights tg) v
+  let fold_pred_e = WG.fold_pred_e
+end
+
+module TSDisplay = ExtGraph.Display.MakeLabeled
+    (TSG)
+    (SrkUtil.Int)
+    (struct
+      open WeightedGraph
+      type t = klabel
+      let pp formatter w = match w with
+        | Weight w -> K.pp formatter w
+        | Call (s,t) -> Format.fprintf formatter "call(%d, %d)" s t
+      let show = SrkUtil.mk_show pp
+    end)
+
+let decorate_transition_system predicates ts entry =
+  TS.forward_invariants_pa predicates ts entry
+  |> List.fold_left (fun ts (v, invariant) ->
+      let fresh_id = (Def.mk (Assume Bexpr.ktrue)).did in
+      WG.split_vertex ts v (Weight (K.assume invariant)) fresh_id)
+    ts
+
+let make_transition_system rg =
+  let call_edge block =
+    Call ((RG.block_entry rg block).did, (RG.block_exit rg block).did)
+  in
+  let assertions = ref SrkUtil.Int.Map.empty in
+  let add_assert v e =
+    assertions := SrkUtil.Int.Map.add v e (!assertions)
+  in
+  let ts =
+    BatEnum.fold (fun ts (block, graph) ->
+        let tg =
+          RG.G.fold_vertex (fun def tg ->
+              let tg = WG.add_vertex tg def.did in
+              let label =
+                match def.dkind with
+                | Call (None, AddrOf (Variable (func, OffsetNone)), []) ->
+                  call_edge func
+                | Assert (phi, msg) ->
+                  let condition = tr_bexpr phi in
+                  add_assert def.did (condition, Def.get_location def, msg);
+                  Weight (K.assume condition)
+                | AssertMemSafe (expr, msg) ->
+                  let condition =
+                    match tr_expr expr with
+                    | TInt _ -> Ctx.mk_false
+                    | TPointer p ->
+                      Ctx.mk_and [
+                        Ctx.mk_leq (Ctx.mk_real QQ.zero) p.ptr_pos;
+                        Ctx.mk_lt p.ptr_pos p.ptr_width
+                      ]
+                  in
+                  add_assert def.did (condition, Def.get_location def, msg);
+                  Weight (K.assume condition)
+                | _ -> Weight (weight def)
+              in
+              RG.G.fold_succ
+                (fun succ tg -> WG.add_edge tg def.did label succ.did)
+                graph def
+                tg)
+            graph
+            TS.empty
+        in
+        let predicates =
+          RG.G.fold_vertex (fun def predicates ->
+              match def.dkind  with
+              | Assume phi when Bexpr.equal phi Bexpr.ktrue ->
+                predicates
+              | Assert (phi, _) | Assume phi ->
+                Syntax.Expr.Set.add (tr_bexpr phi) predicates
+              | _ ->
+                predicates)
+            graph
+            Syntax.Expr.Set.empty
+          |> Syntax.Expr.Set.enum
+          |> BatList.of_enum
+        in
+
+        let entry = (RG.block_entry rg block).did in
+        let exit = (RG.block_exit rg block).did in
+        let point_of_interest v =
+          v = entry || v = exit || SrkUtil.Int.Map.mem v (!assertions)
+        in
+        let tg = TS.simplify point_of_interest tg in
+        let tg = TS.remove_temporaries tg in
+        let tg =
+          if !forward_inv_gen then
+            Log.phase "Forward invariant generation"
+              (decorate_transition_system predicates tg) entry
+          else
+            tg
+        in
+        WG.fold_edges (fun (src, label, tgt) ts ->
+            match label with
+            | Weight w -> WG.add_edge ts src (Weight w) tgt
+            | Call (s,t) -> WG.add_edge ts src (Call (s,t)) tgt)
+          tg
+          (WG.fold_vertex (fun v ts ->
+               WG.add_vertex ts v)
+              tg
+              ts))
+      TS.empty
+      (RG.bodies rg)
+  in
+  (ts, !assertions)
+
 let analyze file =
+  populate_offset_table file;
   match file.entry_points with
   | [main] -> begin
       let rg = Interproc.make_recgraph file in
-      let rg =
-        if !forward_inv_gen
-        then Log.phase "Forward invariant generation" decorate rg
-        else rg
-      in
-(*
-      BatEnum.iter (Interproc.RGD.display % snd) (RG.bodies rg);
-*)
-      let local _ v = not (Var.is_global (var_of_value v)) in
-      let query = A.mk_query rg weight local main in
-      let is_assert def = match def.dkind with
-        | Assert (_, _) | AssertMemSafe _ -> true
-        | _             -> false
-      in
-      let check_assert def path =
-        match def.dkind with
-        | AssertMemSafe (expr, msg) -> begin
-            match tr_expr expr with
-            | TInt _ ->
-              Report.log_error (Def.get_location def) "Memory safety (type error)"
-            | TPointer p ->
-              begin
-                let sigma sym =
-                  match V.of_symbol sym with
-                  | Some v when K.mem_transform v path ->
-                    K.get_transform v path
-                  | _ -> Ctx.mk_const sym
-                in
-                let phi =
-                  Ctx.mk_and [
-                    Ctx.mk_leq (Ctx.mk_real QQ.zero) p.ptr_pos;
-                    Ctx.mk_lt p.ptr_pos p.ptr_width
-                  ]
-                in
-                let phi = Syntax.substitute_const Ctx.context sigma phi in
+      let entry = (RG.block_entry rg main).did in
+      let (ts, assertions) = make_transition_system rg in
 
-                let path_condition =
-                  Ctx.mk_and [K.guard path; Ctx.mk_not phi]
-                  |> SrkSimplify.simplify_terms ark
-                in
-                dump_goal (Def.get_location def) path_condition;
-                match Wedge.is_sat Ctx.context path_condition with
-                | `Sat -> Report.log_error (Def.get_location def) msg
-                | `Unsat -> Report.log_safe ()
-                | `Unknown ->
-                  logf ~level:`warn "Z3 inconclusive";
-                  Report.log_error (Def.get_location def) msg
-              end
-          end
-        | Assert (phi, msg) -> begin
-            let phi = tr_bexpr phi in
-            let sigma sym =
-              match V.of_symbol sym with
-              | Some v when K.mem_transform v path ->
-                K.get_transform v path
-              | _ -> Ctx.mk_const sym
-            in
-            let phi = Syntax.substitute_const Ctx.context sigma phi in
-            let path_condition =
-              Ctx.mk_and [K.guard path; Ctx.mk_not phi]
-              |> SrkSimplify.simplify_terms ark
-            in
-            logf "Path condition:@\n%a" (Syntax.pp_smtlib2 Ctx.context) path_condition;
-            dump_goal (Def.get_location def) path_condition;
-            begin match Wedge.is_sat Ctx.context path_condition with
-              | `Sat -> Report.log_error (Def.get_location def) msg
-              | `Unsat -> Report.log_safe ()
-              | `Unknown ->
-                logf ~level:`warn "Z3 inconclusive";
-                Report.log_error (Def.get_location def) msg
-            end
-          end
-        | _ -> ()
-      in
-      A.single_src_restrict query is_assert check_assert;
+      (*TSDisplay.display ts;*)
+
+      let query = TS.mk_query ts in
+      assertions |> SrkUtil.Int.Map.iter (fun v (phi, loc, msg) ->
+          let path = TS.path_weight query entry v in
+          let sigma sym =
+            match V.of_symbol sym with
+            | Some v when K.mem_transform v path ->
+              K.get_transform v path
+            | _ -> Ctx.mk_const sym
+          in
+          let phi = Syntax.substitute_const Ctx.context sigma phi in
+          let path_condition =
+            Ctx.mk_and [K.guard path; Ctx.mk_not phi]
+            |> SrkSimplify.simplify_terms srk
+          in
+          logf "Path condition:@\n%a"
+            (Syntax.pp_smtlib2 Ctx.context) path_condition;
+          dump_goal loc path_condition;
+          match Wedge.is_sat Ctx.context path_condition with
+          | `Sat -> Report.log_error loc msg
+          | `Unsat -> Report.log_safe ()
+          | `Unknown ->
+            logf ~level:`warn "Z3 inconclusive";
+            Report.log_error loc msg);
 
       Report.print_errors ();
       Report.print_safe ();
@@ -569,17 +609,12 @@ let analyze file =
   | _ -> assert false
 
 let resource_bound_analysis file =
+  populate_offset_table file;
   match file.entry_points with
   | [main] -> begin
       let rg = Interproc.make_recgraph file in
-      let rg =
-        if !forward_inv_gen
-        then Log.phase "Forward invariant generation" decorate rg
-        else rg
-      in
-
-      let local _ v = not (Var.is_global (var_of_value v)) in
-      let query = A.mk_query rg weight local main in
+      let (ts, _) = make_transition_system rg in
+      let query = TS.mk_query ts in
       let cost =
         let open CfgIr in
         let file = get_gfile () in
@@ -595,8 +630,10 @@ let resource_bound_analysis file =
         | Some v -> Var.is_global (var_of_value v)
         | None -> false
       in
-
-      A.HT.iter (fun procedure summary ->
+      RG.blocks rg |> BatEnum.iter (fun procedure ->
+          let entry = (RG.block_entry rg procedure).did in
+          let exit = (RG.block_exit rg procedure).did in
+          let summary = TS.path_weight query entry exit in
           if K.mem_transform cost summary then begin
             logf ~level:`always "Procedure: %a" Varinfo.pp procedure;
             (* replace cost with 0, add constraint cost = rhs *)
@@ -608,27 +645,27 @@ let resource_bound_analysis file =
                   Ctx.mk_const x
               in
               let rhs =
-                Syntax.substitute_const ark subst (K.get_transform cost summary)
+                Syntax.substitute_const srk subst (K.get_transform cost summary)
               in
-              Ctx.mk_and [Syntax.substitute_const ark subst (K.guard summary);
+              Ctx.mk_and [Syntax.substitute_const srk subst (K.guard summary);
                           Ctx.mk_eq (Ctx.mk_const cost_symbol) rhs ]
             in
-            match Wedge.symbolic_bounds_formula ~exists ark guard cost_symbol with
+            match Wedge.symbolic_bounds_formula ~exists srk guard cost_symbol with
             | `Sat (lower, upper) ->
               begin match lower with
                 | Some lower ->
-                  logf ~level:`always "%a <= cost" (Syntax.Term.pp ark) lower;
+                  logf ~level:`always "%a <= cost" (Syntax.Term.pp srk) lower;
                   logf ~level:`always "%a is o(%a)"
                     Varinfo.pp procedure
-                    BigO.pp (BigO.of_term ark lower)
+                    BigO.pp (BigO.of_term srk lower)
                 | None -> ()
               end;
               begin match upper with
                 | Some upper ->
-                  logf ~level:`always "cost <= %a" (Syntax.Term.pp ark) upper;
+                  logf ~level:`always "cost <= %a" (Syntax.Term.pp srk) upper;
                   logf ~level:`always "%a is O(%a)"
                   Varinfo.pp procedure
-                  BigO.pp (BigO.of_term ark upper)
+                  BigO.pp (BigO.of_term srk upper)
                 | None -> ()
               end
             | `Unsat ->
@@ -636,9 +673,30 @@ let resource_bound_analysis file =
                 Varinfo.pp procedure
           end else
             logf ~level:`always "Procedure %a has zero cost" Varinfo.pp procedure)
-        (A.get_summaries query)
     end
   | _ -> assert false
+
+let _ =
+  CmdLine.register_config
+    ("-cra-no-forward-inv",
+     Arg.Clear forward_inv_gen,
+     " Turn off forward invariant generation");
+  CmdLine.register_config
+    ("-cra-split-loops",
+     Arg.Clear K.SPSplit.abstract_left,
+     " Turn on loop splitting");
+  CmdLine.register_config
+    ("-cra-no-matrix",
+     Arg.Clear K.SPOne.abstract_left,
+     " Turn off matrix recurrences");
+  CmdLine.register_config
+    ("-cra-prsd",
+     Arg.Clear K.SPPeriodicRational.abstract_left,
+     " Use periodic rational spectral decomposition");
+  CmdLine.register_config
+    ("-dump-goals",
+     Arg.Set dump_goals,
+     " Output goal assertions in SMTLIB2 format")
 
 let _ =
   CmdLine.register_pass

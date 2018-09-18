@@ -1,3 +1,6 @@
+(** Wedge abstract domain.  A wedge corresponds to a conjunction of equations
+    and inequations over a vocabulary that includes addition, multiplication,
+    exponentiation, logarithm, division, and modulo. *)
 open Syntax
 
 type 'a t
@@ -8,12 +11,15 @@ val show : 'a t -> string
 
 val join : ?integrity:('a formula -> unit) -> 'a t -> 'a t -> 'a t
 
+val meet : 'a t -> 'a t -> 'a t
+
+val meet_atoms : 'a t -> ('a formula) list -> unit
+
 val equal : 'a t -> 'a t -> bool
 
 val widen : 'a t -> 'a t -> 'a t
 
 val of_atoms : 'a context ->
-  ?integrity:('a formula -> unit) ->
   ('a formula) list ->
   'a t
 
@@ -49,10 +55,12 @@ val farkas_equalities : 'a t -> ('a term * Linear.QQVector.t) list
     and upper bounds for [symbol] that are implied by [wedge]. *)
 val symbolic_bounds : 'a t -> symbol -> ('a term) list * ('a term) list
 
-(** Ensure that the named symbols [pow : Real x Real -> Real] and [log : Real
-    x Real -> Real] belong to a given context. *)
-val ensure_nonlinear_symbols : 'a context -> unit
+(** Given a wedge [wedge] and a term [term], compute a lower and upper bounds
+    for [term] within the region [wedge]. *)
+val bounds : 'a t -> 'a term -> Interval.t
 
+(** Ensure that a context has named [max] and [min] symbols.  If the symbols
+    are not present in the context [ensure_max_min] registers them. *)
 val ensure_min_max : 'a context -> unit
 
 (** Compute a wedge that over-approximates a given formula *)
@@ -84,4 +92,10 @@ val coordinate_system : 'a t -> 'a CoordinateSystem.t
 
 val polyhedron : 'a t -> ([ `Eq | `Geq ] * Linear.QQVector.t) list
 
-val vanishing_ideal : 'a t -> Polynomial.Mvp.t list
+val vanishing_ideal : 'a t -> Polynomial.QQXs.t list
+
+val copy : 'a t -> 'a t
+
+val equational_saturation : ?integrity:('a formula -> unit) -> 'a t -> Polynomial.Rewrite.t
+
+val strengthen : ?integrity:('a formula -> unit) -> 'a t -> unit

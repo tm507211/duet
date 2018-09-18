@@ -148,32 +148,18 @@ type ('a,'b) open_formula = [
 
 exception Quit
 
-class type ['a] smt_model = object
-  method eval_int : 'a term -> ZZ.t
-  method eval_real : 'a term -> QQ.t
-  method eval_fun : symbol -> ('a, typ_fo) expr
-  method sat :  'a formula -> bool
-  method to_string : unit -> string
-end
-
-class type ['a] smt_solver = object
-  method add : ('a formula) list -> unit
-  method push : unit -> unit
-  method pop : int -> unit
-  method reset : unit -> unit
-  method check : ('a formula) list -> [ `Sat | `Unsat | `Unknown ]
-  method to_string : unit -> string
-  method get_model : unit -> [ `Sat of 'a smt_model | `Unsat | `Unknown ]
-  method get_unsat_core : ('a formula) list ->
-    [ `Sat | `Unsat of ('a formula) list | `Unknown ]
-end
-
 type 'a context =
   { hashcons : HC.t;
     symbols : (string * typ) DynArray.t;
     named_symbols : (string,int) Hashtbl.t;
     mk : label -> (sexpr hobj) list -> sexpr hobj;
-  }
+    id : int }
+
+let fresh_id =
+  let max_id = ref (-1) in
+  fun () ->
+    incr max_id;
+    !max_id
 
 let size expr =
   let open SrkUtil.Int in
@@ -254,7 +240,7 @@ let rec mk_pow srk t n =
     let q = mk_pow srk t (n / 2) in
     let q_squared = mk_mul srk [q; q] in
     if n mod 2 = 0 then q_squared
-    else mk_mul srk [q; q_squared]
+    else mk_mul srk [t; q_squared]
 
 let mk_true srk = srk.mk True []
 let mk_false srk = srk.mk False []
@@ -295,8 +281,6 @@ let mk_truncate srk t =
     (mk_floor srk t)
     (mk_ceiling srk t)
 
-(* Equivalent to mk_truncate srk (mk_div srk s t), but with built-in sign
-   analysis *)
 let mk_idiv srk s t =
   let zero = mk_zero srk in
   let div = mk_div srk s t in
@@ -696,8 +680,10 @@ module Formula = struct
     | Node (And, conjuncts, _) -> `And conjuncts
     | Node (Or, disjuncts, _) -> `Or disjuncts
     | Node (Not, [phi], _) -> `Not phi
-    | Node (Exists (name, typ), [phi], _) -> `Quantify (`Exists, name, typ, phi)
-    | Node (Forall (name, typ), [phi], _) -> `Quantify (`Forall, name, typ, phi)
+    | Node (Exists (name, typ), [phi], _) ->
+      `Quantify (`Exists, name, typ, phi)
+    | Node (Forall (name, typ), [phi], _) ->
+      `Quantify (`Forall, name, typ, phi)
     | Node (Eq, [s; t], _) -> `Atom (`Eq, s, t)
     | Node (Leq, [s; t], _) -> `Atom (`Leq, s, t)
     | Node (Lt, [s; t], _) -> `Atom (`Lt, s, t)
@@ -706,19 +692,41 @@ module Formula = struct
     | Node (Ite, [cond; bthen; belse], `TyBool) -> `Ite (cond, bthen, belse)
     | _ -> invalid_arg "destruct: not a formula"
 
-  let rec eval srk alg phi =
-    match destruct srk phi with
-      | `Tru -> alg `Tru
-      | `Fls -> alg `Fls
-      | `Or disjuncts -> alg (`Or (List.map (eval srk alg) disjuncts))
-      | `And conjuncts -> alg (`And (List.map (eval srk alg) conjuncts))
-      | `Quantify (qt, name, typ, phi) ->
-        alg (`Quantify (qt, name, typ, eval srk alg phi))
-      | `Not phi -> alg (`Not (eval srk alg phi))
-      | `Atom (op, s, t) -> alg (`Atom (op, s, t))
-      | `Proposition p -> alg (`Proposition p)
-      | `Ite (cond, bthen, belse) ->
-        alg (`Ite (eval srk alg cond, eval srk alg bthen, eval srk alg belse))
+  let rec eval srk alg phi = match destruct srk phi with
+    | `Tru -> alg `Tru
+    | `Fls -> alg `Fls
+    | `Or disjuncts -> alg (`Or (List.map (eval srk alg) disjuncts))
+    | `And conjuncts -> alg (`And (List.map (eval srk alg) conjuncts))
+    | `Quantify (qt, name, typ, phi) ->
+      alg (`Quantify (qt, name, typ, eval srk alg phi))
+    | `Not phi -> alg (`Not (eval srk alg phi))
+    | `Atom (op, s, t) -> alg (`Atom (op, s, t))
+    | `Proposition p -> alg (`Proposition p)
+    | `Ite (cond, bthen, belse) ->
+      alg (`Ite (eval srk alg cond, eval srk alg bthen, eval srk alg belse))
+
+  let eval_memo srk alg =
+    let table = BatInnerWeaktbl.create 991 in
+    let rec go phi =
+      try BatInnerWeaktbl.find table phi.tag
+      with Not_found ->
+        let result = match destruct srk phi with
+          | `Tru -> alg `Tru
+          | `Fls -> alg `Fls
+          | `Or disjuncts -> alg (`Or (List.map go disjuncts))
+          | `And conjuncts -> alg (`And (List.map go conjuncts))
+          | `Quantify (qt, name, typ, phi) ->
+            alg (`Quantify (qt, name, typ, go phi))
+          | `Not phi -> alg (`Not (go phi))
+          | `Atom (op, s, t) -> alg (`Atom (op, s, t))
+          | `Proposition p -> alg (`Proposition p)
+          | `Ite (cond, bthen, belse) ->
+            alg (`Ite (go cond, go bthen, go belse))
+        in
+        BatInnerWeaktbl.add table phi.tag result;
+        result
+    in
+    go
 
   let pp = pp_expr
   let show ?(env=Env.empty) srk t = SrkUtil.mk_show (pp ~env srk) t
@@ -1301,7 +1309,8 @@ module ImplicitContext(C : sig
   let mk_ite = mk_ite context
 end
 
-module MakeContext () = struct
+module MakeContext () =
+struct
   type t = unit
   type term = (t, typ_arith) expr
   type formula = (t, typ_bool) expr
@@ -1314,7 +1323,8 @@ module MakeContext () = struct
       HC.hashcons hashcons (Node (label, children, typ))
     in
     let named_symbols = Hashtbl.create 991 in
-    { hashcons; symbols; named_symbols; mk }
+    let id = fresh_id () in
+    { hashcons; symbols; named_symbols; mk; id }
 
   include ImplicitContext(struct
       type t = unit
@@ -1322,7 +1332,8 @@ module MakeContext () = struct
     end)
 end
 
-module MakeSimplifyingContext () = struct
+module MakeSimplifyingContext () =
+struct
   type t = unit
   type term = (t, typ_arith) expr
   type formula = (t, typ_bool) expr
@@ -1411,7 +1422,9 @@ module MakeSimplifyingContext () = struct
         else if non_const = [] then
           mk (Real const) []
         else if QQ.equal const QQ.one then
-          hc Mul non_const
+          match non_const with
+          | [x] -> x
+          | _ -> hc Mul non_const
         else
           hc Mul ((mk (Real const) [])::non_const)
 
@@ -1437,16 +1450,41 @@ module MakeSimplifyingContext () = struct
           | _, _ -> hc Div [num; den]
         end
 
+      | Mod, [num; den] ->
+        begin match num.obj, den.obj with
+          | _, Node (Real d, [], _) when QQ.equal d QQ.zero ->
+            hc Mod [num; den]
+          | (Node (Real num, [], _), Node (Real den, [], _)) ->
+            mk (Real (QQ.modulo num den)) []
+          | _, Node (Real den, [], _) when QQ.equal den QQ.zero -> num
+          | _, _ -> hc Mod [num; den]
+        end
+
       | Ite, [cond; bthen; _] when is_true cond -> bthen
       | Ite, [cond; _; belse] when is_false cond -> belse
       | Ite, [_; x; y] when x.tag = y.tag -> x
 
       | _, _ -> hc label children
     in
-    { hashcons; symbols; named_symbols; mk }
+    let id = fresh_id () in
+    { hashcons; symbols; named_symbols; mk; id }
 
   include ImplicitContext(struct
       type t = unit
       let context = context
     end)
+end
+
+module ContextTable = struct
+  module H = Hashtbl.Make(SrkUtil.Int)
+  type 'a t = 'a H.t
+  let create = H.create
+  let clear = H.clear
+  let remove table k = H.remove table k.id (* Do not expose *)
+  let add table k v =
+    H.add table k.id v;
+    Gc.finalise (remove table) k
+  let replace table k v = H.replace table k.id v
+  let find table k = H.find table k.id
+  let mem table k = H.mem table k.id
 end

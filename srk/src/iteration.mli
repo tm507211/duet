@@ -1,38 +1,74 @@
+(** Approximate transitive closure computation. *)
 open Syntax
 
 module type PreDomain = sig
   type 'a t
+  val pp : 'a context -> (symbol * symbol) list -> Format.formatter -> 'a t -> unit
+  val exp : 'a context -> (symbol * symbol) list -> 'a term -> 'a t -> 'a formula
+  val join : 'a context -> (symbol * symbol) list -> 'a t -> 'a t -> 'a t
+  val widen : 'a context -> (symbol * symbol) list -> 'a t -> 'a t -> 'a t
+  val equal : 'a context -> (symbol * symbol) list -> 'a t -> 'a t -> bool
+  val abstract : ?exists:(symbol -> bool) ->
+    'a context ->
+    (symbol * symbol) list ->
+    'a formula ->
+    'a t
+end
+
+module type PreDomainWedge = sig
+  include PreDomain
+  val abstract_wedge : 'a context -> (symbol * symbol) list -> 'a Wedge.t -> 'a t
+end
+
+module type Domain = sig
+  type 'a t
   val pp : Format.formatter -> 'a t -> unit
-  val show : 'a t -> string
   val closure : 'a t -> 'a formula
   val join : 'a t -> 'a t -> 'a t
   val widen : 'a t -> 'a t -> 'a t
   val equal : 'a t -> 'a t -> bool
+  val abstract : ?exists:(symbol -> bool) ->
+    'a context ->
+    (symbol * symbol) list ->
+    'a formula ->
+    'a t
   val tr_symbols : 'a t -> (symbol * symbol) list
 end
 
-module type Domain = sig
+
+module WedgeGuard : PreDomainWedge
+module PolyhedronGuard : sig
   include PreDomain
-  val abstract_iter : ?exists:(symbol -> bool) ->
-    'a context ->
-    'a formula ->
-    (symbol * symbol) list ->
-    'a t
+  val precondition : 'a t -> ('a, Polka.strict Polka.t) SrkApron.property
+  val postcondition : 'a t -> ('a, Polka.strict Polka.t) SrkApron.property
 end
+module LinearGuard : PreDomain
 
-module type DomainPlus = sig
-  include Domain
-  val closure_plus : 'a t -> 'a formula
-end
+module LinearRecurrenceInequation : PreDomain
 
-module WedgeVector : DomainPlus
-module WedgeVectorOCRS : DomainPlus
-module WedgeMatrix : DomainPlus
+module Split(Iter : PreDomain) : PreDomain
 
-module Split(Iter : DomainPlus) : Domain
-
-module Sum (A : PreDomain) (B : PreDomain) : sig
+module Sum (A : PreDomain) (B : PreDomain) () : sig
   include PreDomain
   val left : 'a A.t -> 'a t
   val right : 'a B.t -> 'a t
+  val abstract_left : bool ref
 end
+module SumWedge (A : PreDomainWedge) (B : PreDomainWedge) () : sig
+  include PreDomainWedge
+  val left : 'a A.t -> 'a t
+  val right : 'a B.t -> 'a t
+  val abstract_left : bool ref
+end
+
+module Product (A : PreDomain) (B : PreDomain) : PreDomain
+  with type 'a t = 'a A.t * 'a B.t
+
+(** Same as product, but faster for iteration domains that abstract
+   through the wedge domain. *)
+module ProductWedge (A : PreDomainWedge) (B : PreDomainWedge) : PreDomainWedge
+  with type 'a t = 'a A.t * 'a B.t
+
+module MakeDomain(Iter : PreDomain) : Domain
+
+val identity : 'a context -> (symbol * symbol) list -> 'a formula

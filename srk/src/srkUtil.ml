@@ -1,8 +1,9 @@
+(** Common utility functions *)
 open BatPervasives
 
 module A = BatDynArray
 
-(* Search for an index in a sorted array *)
+(** Search for an index in a sorted array *)
 let search ?compare:(compare = Pervasives.compare) v array =
   let rec go min max =
     if max < min then raise Not_found
@@ -16,7 +17,7 @@ let search ?compare:(compare = Pervasives.compare) v array =
   in
   go 0 (A.length array - 1)
 
-(* Merge two (sorted) arrays *)
+(** Merge two (sorted) arrays *)
 let merge_array ?compare:(compare = Pervasives.compare) a b =
   let alen = Array.length a in
   let blen = Array.length b in
@@ -53,7 +54,7 @@ let rec exp mul one p n =
     let q = exp mul one p (n / 2) in
     let q_squared = mul q q in
     if n mod 2 = 0 then q_squared
-    else mul q q_squared
+    else mul p q_squared
   end
 
 let mk_show pp x =

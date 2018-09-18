@@ -1,3 +1,4 @@
+(** Transition formulas. *)
 open Syntax
 
 module type Var = sig
@@ -122,6 +123,10 @@ module Make
 
   val abstract_post : (C.t,'abs) SrkApron.property -> t -> (C.t,'abs) SrkApron.property
 
+  (** Compute a representation of a transition as a formula and a list
+     of (pre-state, post-state) symbols. *)
+  val to_transition_formula : t -> (((symbol * symbol) list) * C.t formula)
+
   (** Iteration domain.  See {!Iteration}. *)
   module Iter (I : Iteration.Domain) : sig
     type iter = C.t I.t
@@ -135,6 +140,5 @@ module Make
     val join : iter -> iter -> iter
 
     val pp : Format.formatter -> iter -> unit
-    val show : iter -> string
   end
 end

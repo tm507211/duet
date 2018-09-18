@@ -7,14 +7,17 @@ let suite = "Main" >::: [
     Test_syntax.suite;
     Test_smt.suite;
     Test_interval.suite;
+    Test_ring.suite;
     Test_linear.suite;
     Test_polynomial.suite;
+    Test_exppolynomial.suite;
     Test_apron.suite;
     Test_quantifier.suite;
     Test_wedge.suite;
     Test_abstract.suite;
     Test_iteration.suite;
     Test_transition.suite;
+    Test_WeightedGraph.suite;
 ]
 
 let _ =

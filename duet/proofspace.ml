@@ -22,7 +22,6 @@ module Ctx = Syntax.MakeSimplifyingContext ()
 module Atomicity = Dependence.AtomicityAnalysis
 
 let ctx = Ctx.context
-let smt_ctx = SrkZ3.mk_context ctx []
 
 (* Indexed variables -- variables paired with thread identifiers *)
 module IV = struct
@@ -951,7 +950,7 @@ let mk_block_graph file =
       `Transition (Tr.assign (v, 0) (index_expr 0 expr))
     | Builtin (Fork (_, expr, _)) ->
       let func = match Aexpr.strip_casts expr with
-        | AddrOf (Variable (func, OffsetFixed 0)) -> func
+        | AddrOf (Variable (func, OffsetNone)) -> func
         | _ -> assert false
       in
       `Fork func
@@ -1267,7 +1266,7 @@ let verify file =
         |> Tr.guard
       in
       begin
-        match smt_ctx#is_sat trace_formula with
+        match Smt.is_sat ctx trace_formula with
         | `Sat ->
           log ~level:`always ~attributes:[`Bold;`Red]
             "Verification result: Unsafe";

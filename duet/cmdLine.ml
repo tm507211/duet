@@ -8,7 +8,7 @@ let parameterized   = ref false
 let sanity_checks   = ref true
 let display_graphs  = ref false
 let show_stats      = ref false
-let library_path    = ref "" (** Path to standard libraries *)
+let cflags          = ref "" (** Extra flags for C front-end *)
 
 let widening        = ref true
 
@@ -45,10 +45,10 @@ let stats_arg =
 let colorize_arg =
   ("-color", Arg.Set Log.colorize, " Use ANSI colors")
 
-let lib_arg =
-  ("-lib",
-   Arg.Set_string library_path,
-   " Change path to standard libraries")
+let cflags_arg =
+  ("-cflags",
+   Arg.Set_string cflags,
+   " Command line options for C pre-processor")
 
 (** Set the load path.  The load path should be a colon-delimited list
     of directories.  The load path determines which directories that
@@ -78,18 +78,6 @@ let fail_malloc_arg =
 
 let fail_fork_arg =
   ("-fail-fork", Arg.Set fail_fork, " Allow forks to fail")
-
-let default_solver_arg =
-  ("-smt-solver",
-   Arg.String (fun arg ->
-       let solver = match String.lowercase arg with
-         | "z3" -> `Z3
-         | "mathsat" -> `Mathsat
-         | _ ->
-           Log.fatalf "SMT solver `%s' is invalid" arg
-       in
-       Srk.Smt.set_default_solver solver),
-   " Set default SMT solver")
 
 (** Debug args *)
 let debug_arg =
@@ -131,13 +119,12 @@ let config_args = ref
       stats_arg;
       colorize_arg;
       whole_program_arg;
-      lib_arg;
+      cflags_arg;
       load_path_arg;
       parameterized_arg;
       temp_dir_arg;
       fail_malloc_arg;
-      fail_fork_arg;
-      default_solver_arg;
+      fail_fork_arg
     ]
 
 let passes : (CfgIr.file -> unit) list ref = ref []

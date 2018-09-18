@@ -4,8 +4,10 @@ open Syntax
 open SrkApron
 open Test_pervasives
 
+module CS = CoordinateSystem
+
 let (pow, log) =
-  Wedge.ensure_nonlinear_symbols srk;
+  Nonlinear.ensure_symbols srk;
   (get_named_symbol srk "pow",
    get_named_symbol srk "log")
 
@@ -17,10 +19,29 @@ let assert_implies phi psi =
       let not_atom =
         rewrite srk ~down:(nnf_rewriter srk) (mk_not srk atom)
       in
-      if not (Wedge.is_bottom (Wedge.of_atoms srk (not_atom::phi))) then
+      let wedge = Wedge.of_atoms srk (not_atom::phi) in
+      Wedge.strengthen wedge;
+      if not (Wedge.is_bottom wedge) then
         assert_failure (Printf.sprintf "%s\ndoes not imply\n%s"
                           (Formula.show srk (mk_and srk phi))
                           (Formula.show srk atom)))
+
+let cs_roundtrip1 () =
+  let cs = CoordinateSystem.mk_empty srk in
+  let xy = mk_mul srk [x; y] in
+  let yx = mk_mul srk [y; x] in
+  CS.admit_term cs xy;
+  CS.admit_term cs yx;
+  assert_equal_term xy (CS.term_of_vec cs (CS.vec_of_term cs xy));
+  assert_equal_term yx (CS.term_of_vec cs (CS.vec_of_term cs yx))
+
+let cs_roundtrip2 () =
+  let cs = CoordinateSystem.mk_empty srk in
+  let x4x = mk_mul srk [x; mk_real srk (QQ.of_int 4); x] in
+  let xx = mk_mul srk [x; x] in
+  let fourxx = mk_mul srk [mk_real srk (QQ.of_int 4); xx] in
+  CS.admit_term cs x4x;
+  assert_equal_term fourxx (CS.term_of_vec cs (CS.vec_of_term cs x4x))
 
 let roundtrip1 () =
   let atoms =
@@ -262,6 +283,8 @@ let powlog () =
   assert_implies phi [(int 1) <= (int 0)]
 
 let suite = "Wedge" >::: [
+    "cs_roundtrip1" >:: cs_roundtrip1;
+    "cs_roundtrip2" >:: cs_roundtrip2;
     "roundtrip1" >:: roundtrip1;
     "roundtrip2" >:: roundtrip2;
     "strengthen1" >:: strengthen1;

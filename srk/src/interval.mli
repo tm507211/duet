@@ -1,3 +1,5 @@
+(** Operations for manipulating numeric intervals. *)
+
 type t
 
 val compare : t -> t -> int
@@ -24,6 +26,7 @@ val floor : t -> t
 
 val join : t -> t -> t
 val meet : t -> t -> t
+val widening : t -> t -> t
 val leq : t -> t -> bool
 
 val is_nonnegative : t -> bool
@@ -45,3 +48,5 @@ val log : t -> t -> t
 (** [const_power ivl k] computes an interval surrounding the set the set
     [{ x^k : x in ivl }]. *)
 val exp_const : t -> int -> t
+
+val exp : t -> t -> t

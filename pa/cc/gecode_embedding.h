@@ -13,7 +13,6 @@ class ConstraintEmbedding : public Gecode::Space {
  public:
   ConstraintEmbedding(const Embedding& emb) : l(*this, emb.get_universe_graph().uSize()-1, 1, emb.get_universe_graph().vSize()) {
     const Graph& u_graph = emb.get_universe_graph();
-    Gecode::BoolVar y(*this, 0, 1);
 
     /* Setup the domain of each variable */
     for (size_t i = 1; i < u_graph.uSize(); ++i){
@@ -51,8 +50,12 @@ class ConstraintEmbedding : public Gecode::Space {
     branch(*this, l, Gecode::tiebreak(Gecode::INT_VAR_CHB_MAX(chb), Gecode::INT_VAR_SIZE_MIN(), Gecode::INT_VAR_RND(time(NULL))), Gecode::INT_VAL_RND(time(NULL)));
   }
 
-  ConstraintEmbedding(bool share, ConstraintEmbedding& s) : Gecode::Space(share, s) {
-    l.update(*this, share, s.l);
+  ConstraintEmbedding(bool share, ConstraintEmbedding& s) : Gecode::Space(s) {
+    l.update(*this, s.l);
+  }
+
+  ConstraintEmbedding* copy() {
+    return new ConstraintEmbedding(*this);
   }
 
   virtual Gecode::Space* copy(bool share){

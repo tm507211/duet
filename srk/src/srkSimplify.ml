@@ -9,11 +9,11 @@ module TermPolynomial = struct
       int_of : 'a term -> int;
       of_int : int -> 'a term }
 
-  module Mvp = Polynomial.Mvp
+  module QQXs = Polynomial.QQXs
   module Monomial = Polynomial.Monomial
   module DynArray = BatDynArray
 
-  type 'a t = Mvp.t
+  type 'a t = QQXs.t
 
   let mk_context srk =
     let table = Expr.HT.create 991 in
@@ -32,12 +32,12 @@ module TermPolynomial = struct
 
   let rec of_term ctx =
     let srk = ctx.srk in
-    let mvp_term = Mvp.of_dim % ctx.int_of in
+    let mvp_term = QQXs.of_dim % ctx.int_of in
     let alg = function
-      | `Add xs -> List.fold_left Mvp.add Mvp.zero xs
-      | `Mul xs -> List.fold_left Mvp.mul Mvp.one xs
-      | `Real k -> Mvp.scalar k
-      | `Unop (`Neg, x) -> Mvp.negate x
+      | `Add xs -> List.fold_left QQXs.add QQXs.zero xs
+      | `Mul xs -> List.fold_left QQXs.mul QQXs.one xs
+      | `Real k -> QQXs.scalar k
+      | `Unop (`Neg, x) -> QQXs.negate x
       | `Unop (`Floor, x) -> mvp_term (mk_floor srk (term_of ctx x))
       | `App (f, args) -> mvp_term (mk_app srk f args)
       | `Binop (`Div, x, y) ->
@@ -52,7 +52,7 @@ module TermPolynomial = struct
     
   and term_of ctx p =
     let srk = ctx.srk in
-    (Mvp.enum p)
+    (QQXs.enum p)
     /@ (fun (coeff, monomial) ->
         let product =
           BatEnum.fold
@@ -62,10 +62,10 @@ module TermPolynomial = struct
                  (fun product _ -> term::product)
                  product
                  (1 -- power))
-            [mk_real srk coeff]
+            []
             (Monomial.enum monomial)
         in
-        mk_mul srk product)
+        mk_mul srk ((mk_real srk coeff)::product))
     |> BatList.of_enum
     |> mk_add ctx.srk
 end
@@ -76,8 +76,17 @@ let simplify_terms_rewriter srk =
     match destruct srk expr with
     | `Atom (op, s, t) ->
       let simplified_term =
-        TermPolynomial.term_of ctx
-          (TermPolynomial.of_term ctx (mk_sub srk s t))
+        let polynomial =
+          TermPolynomial.of_term ctx (mk_sub srk s t)
+        in
+        let c = TermPolynomial.QQXs.content polynomial in
+        let polynomial =
+          if QQ.equal c QQ.zero then
+            polynomial
+          else
+            TermPolynomial.QQXs.scalar_mul (QQ.inverse (QQ.abs c)) polynomial
+        in
+        TermPolynomial.term_of ctx polynomial
       in
       let zero = mk_real srk QQ.zero in
       let result = match op with
@@ -90,58 +99,6 @@ let simplify_terms_rewriter srk =
 
 let simplify_terms srk expr =
   rewrite srk ~up:(simplify_terms_rewriter srk) expr
-
-module ExprVec = Linear.ExprQQVector
-let qe_partial_implicant srk p implicant =
-  let subst map expr =
-    substitute_const srk (fun sym ->
-        try Symbol.Map.find sym map
-        with Not_found -> mk_const srk sym)
-      expr
-  in
-  let (rewrite, implicant) =
-    List.fold_left (fun (rewrite, implicant) atom ->
-        match Interpretation.destruct_atom srk atom with
-        | `Comparison (`Eq, x, y) ->
-          let diff =
-            ExprVec.of_term srk (subst rewrite (mk_sub srk x y))
-          in
-          (* A symbol can be eliminated if it appears in the equation, and
-             isn't *trapped*.  A symbol is trapped if it appears as subterm of
-             another term.  *)
-          let (trapped, elim) =
-            BatEnum.fold (fun (trapped, elim) (term, _) ->
-                match Term.destruct srk term with
-                | `App (sym, []) ->
-                  if p sym then (trapped, elim)
-                  else (trapped, Symbol.Set.add sym elim)
-                | _ -> (Symbol.Set.union trapped (symbols term)), elim)
-              (Symbol.Set.empty, Symbol.Set.empty)
-              (ExprVec.enum diff)
-          in
-          let elim = Symbol.Set.diff elim trapped in
-          if Symbol.Set.is_empty elim then
-            (rewrite, atom::implicant)
-          else
-            let sym = Symbol.Set.min_elt elim in
-            let (coeff, rest) = ExprVec.pivot (mk_const srk sym) diff in
-            let rhs =
-              ExprVec.scalar_mul (QQ.negate (QQ.inverse coeff)) rest
-              |> ExprVec.term_of srk
-            in
-            let rewrite =
-              Symbol.Map.map
-                      (substitute_const srk (fun sym' ->
-                    if sym = sym' then rhs
-                    else mk_const srk sym'))
-                      rewrite
-            in
-            (Symbol.Map.add sym rhs rewrite, implicant)
-        | _ -> (rewrite, atom::implicant))
-      (Symbol.Map.empty, [])
-      implicant
-  in
-  List.map (subst rewrite) implicant
 
 let purify_rewriter srk table =
   fun expr ->

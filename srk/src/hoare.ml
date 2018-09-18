@@ -45,15 +45,12 @@ module MakeSolver(Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wit
     fprintf formatter "}"
 
   type t = {
-      smt_ctx : Ctx.t z3_context;
       solver : Ctx.t CHC.solver;
       triples : triple DA.t;
     }
 
   let mk_solver () =
-    let smt_ctx = mk_context srk [] in
-    { smt_ctx = smt_ctx;
-      solver = CHC.mk_solver smt_ctx;
+    { solver = CHC.mk_solver srk;
       triples = DA.create();
     }
 
@@ -194,7 +191,7 @@ module MakeSolver(Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wit
            let z3_solver = SrkZ3.mk_solver srk in
            let assumptions = List.map (fun _ -> Ctx.mk_const (Ctx.mk_symbol `TyBool)) pre in
            let rules = List.map2 (fun pre ass -> Syntax.mk_iff srk pre ass) pre assumptions in
-           z3_solver#add ((Ctx.mk_not post_ass) :: (Transition.guard trans) :: rules);
+           Solver.add z3_solver ((Ctx.mk_not post_ass) :: (Transition.guard trans) :: rules);
            let rec get_pres ass pres core acc =
              match ass, pres, core with
              | a :: ass, p :: pres, c :: core ->
@@ -208,7 +205,7 @@ module MakeSolver(Ctx : Syntax.Context) (Var : Transition.Var) (Ltr : Letter wit
              | [], p, c -> assert false
              | a, [], c -> assert false
            in
-           match z3_solver#get_unsat_core assumptions with
+           match Solver.get_unsat_core z3_solver assumptions with
            | `Sat -> assert false
            | `Unknown -> pre
            | `Unsat core -> get_pres assumptions pre core []
