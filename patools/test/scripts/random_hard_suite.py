@@ -22,10 +22,6 @@ def main():
   for i in xrange(len(params)):
     params[i][::3] = map(int, params[i][::3])
 
-  max_diff = max(1, int(0.05 * N))
-  max_unsolved = int(0.01 * N)
-
-  nTrue = nFalse = i = 0
   while i != N:
     p = random.choice(params)
 
@@ -39,17 +35,7 @@ def main():
 
     print p, lines
 
-    good = False
     if lines[0].count("--") > 0:
-      if "False" in lines[1] and (nFalse - nTrue < max_diff):
-          nFalse += 1
-          good = True
-      elif "True" in lines[1] and (nTrue - nFalse < max_diff):
-          nTrue += 1
-          good = True
-      elif "--" in lines[1] and (i - nTrue - nFalse < max_unsolved):
-          good = True
-    if good:
       print "Added %s @ %s %s" % (fname, lines[1], lines[0])
       i += 1
 
