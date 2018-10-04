@@ -6,6 +6,5 @@ if [ "$R" = "s SATISFIABLE" ]; then
 elif [ "$R" = "s UNSATISFIABLE" ]; then
     exit 1
 else
-    echo "ERROR"
-    exit -1
+    exit 2
 fi

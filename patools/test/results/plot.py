@@ -10,7 +10,7 @@ def read_data(file_name, cols):
     data[cols:] = map(lambda x: map(lambda y: float(y)/1000, x), data[cols:])
     t = [1 if x == "True" else 0 for x in data[0]]
     f = [1 if x == "False" else 0 for x in data[0]]
-    n = [1 if x == "--" else 0 for x in data[0]]
+    n = [1 if x == "--" or x == "Error" else 0 for x in data[0]]
     print reduce(lambda x, y: x + y, t)
     print reduce(lambda x, y: x + y, f)
     print reduce(lambda x, y: x + y, n)
@@ -25,6 +25,7 @@ if len(sys.argv) < 4:
     print "\t5 : Gecode"
     print "\t6 : VF2"
     print "\t7 : OrTools"
+    print "\t8 : Glasgow"
     sys.exit(-1)
 
 cols = int(sys.argv[3])
@@ -34,6 +35,7 @@ TO = int(sys.argv[2])
 def cactus_plot(data, *args, **kwargs):
     data = [x for x in sorted(data) if x < TO]
     print len(data)
+    if len(data) == 0: return
     X = [0]
     Y = [data[0]]
     val = data[0]
@@ -52,7 +54,8 @@ solver = [("MatchEmbeds","s", "b"),
           ("HaifaCSP","*", "m"),
           ("Gecode","d", "c"),
           ("VF2","^", "g"),
-          ("OrTools","p", "orange")]
+          ("OrTools","p", "orange"),
+          ("Glasgow", "h", "pink")]
 # s - square, v ^ < > - triangles, o - circe, p - pentagon, * - star, h H - hexagon, x - x, d D - diamond
 
 solvers = [i for i in range(cols)]
@@ -62,7 +65,11 @@ if len(sys.argv) > 4:
 for i in range(len(solvers)):
     data_ind = cols+i
     (label, marker, color) = solver[int(solvers[i])]
-    cactus_plot(data[data_ind], '-', marker=marker, color=color, label=label)
+    d = []
+    for j in range(len(data[data_ind])):
+      if data[i][j] != "Error":
+        d.append(data[data_ind][j])
+    cactus_plot(d[:], '-', marker=marker, color=color, label=label)
 
 plt.xlabel('Instances Solved')
 plt.ylabel('Time (s)')

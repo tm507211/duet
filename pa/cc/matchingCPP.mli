@@ -32,6 +32,7 @@ module type S = sig
   val ortools : t -> bool
   val emb2mzn : t -> bool
   val emb2dimacs : t -> bool
+  val emb2lad : t -> bool
 end
 
 module Make (Predicate : Symbol) : S with type predicate = Predicate.t

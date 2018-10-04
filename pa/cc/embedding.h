@@ -431,7 +431,7 @@ class Embedding{
       int max_var = 0;
       int clauses = 0;
       std::map<std::pair<int,int>, int> edge_var;
-  
+
       FILE* tmp_file = fopen("tmp.cnf", "w");
 
       for (size_t i = 1; i < u_graph_.uSize(); ++i){
@@ -444,6 +444,45 @@ class Embedding{
 	  clauses++;
       }
 
+      // At most one image
+      for (size_t i = 1; i < u_graph_.uSize(); ++i) {
+        const std::vector<Graph::Edge>& adj = u_graph_.uAdj(i);
+        int r = edge_var[(std::make_pair(i, adj[0].vertex))];
+        for (size_t j = 1; j < adj.size(); ++j) {
+          int x = edge_var[std::make_pair(i, adj[j].vertex)];
+          stream << -x << " " << -r << " 0\n";
+          clauses++;
+          if (j < adj.size() - 1) {
+            int rn = ++max_var;
+            stream << -x << " " << rn << " 0\n";
+            stream << -r << " " << rn << " 0\n";
+            r = rn;
+            clauses += 2;
+          }
+        }
+      }
+
+      stream << "c alldifferent\n";
+      for (size_t i = 1; i < u_graph_.vSize(); ++i) {
+        const std::vector<Graph::Edge>& adj = u_graph_.vAdj(i);
+        int r = 0;
+        if (adj.size() > 0)
+          r = edge_var[(std::make_pair(adj[0].vertex, i))];
+        for (size_t j = 1; j < adj.size(); ++j) {
+          int x = edge_var[std::make_pair(adj[j].vertex, i)];
+          stream << -x << " " << -r << " 0\n";
+          clauses++;
+          if (j < adj.size() - 1) {
+            int rn = ++max_var;
+            stream << -x << " " << rn << " 0\n";
+            stream << -r << " " << rn << " 0\n";
+            r = rn;
+            clauses += 2;
+          }
+        }
+      }
+
+/*
       for (size_t i = 1; i < u_graph_.uSize(); ++i){
 	  const std::vector<Graph::Edge>& adj = u_graph_.uAdj(i);
 	  for (size_t j = 0; j < adj.size(); ++j){
@@ -467,12 +506,12 @@ class Embedding{
 		  clauses++;
 	      }
 	  }
-      }
+      }*/
 
       stream << "c higher-arity constraints\n";
       for (size_t p = 0; p < p_graph_.uSize(); ++p){
 	  std::stringstream clausestream;
-	  const std::vector<int>& p_vars = p_graph_.getULabel(p).vars;	  
+	  const std::vector<int>& p_vars = p_graph_.getULabel(p).vars;
 	  const std::vector<Graph::Edge>& p_adj = p_graph_.uAdj(p);
 
 	  for (size_t q = 0; q < p_adj.size(); q++) {
@@ -490,7 +529,7 @@ class Embedding{
 	        for(size_t i = 0; i < p_vars.size(); i++) {
 		  int e = edge_var[std::make_pair(p_vars[i], q_vars[i])];
 		  stream << e << " " << -c << " 0\n";
-		  clauses++;		  
+		  clauses++;
 		}
 	      }
 	      clausestream << " " << c;
@@ -505,6 +544,111 @@ class Embedding{
       fclose(tmp_file);
 
       return true;
+  }
+
+  bool to_lad() {
+
+    size_t max_label = 0;
+    std::map<size_t, size_t> pred_label;
+    std::vector<size_t> pred_ind_label;
+
+    // Pattern Graph
+    std::vector<std::vector<size_t>> graph;
+
+    graph.resize(u_graph_.uSize());
+
+    graph[0].push_back(0);
+    for (size_t i = 1; i < u_graph_.uSize(); ++i) {
+      graph[0].push_back(i);
+      graph[0].push_back(i);
+      graph[i].push_back(0);
+    }
+    max_label = u_graph_.uSize() - 1;
+
+
+    for (size_t p = 0; p < p_graph_.uSize(); ++p) {
+      size_t pred = p_graph_.getULabel(p).pred;
+      if (pred_label.find(pred) == pred_label.end()) { // if new pred
+        pred_label[pred] = ++max_label;
+      }
+      size_t l = pred_label[pred];
+
+      graph.resize(graph.size() + 1);
+      graph[graph.size() - 1].push_back(l);
+
+      const std::vector<int>& p_vars = p_graph_.getULabel(p).vars;
+      for (size_t i = 0; i < p_vars.size(); ++i) {
+        if (i == pred_ind_label.size()) {
+          pred_ind_label.push_back(++max_label);
+        }
+        graph[graph.size() - 1].push_back(p_vars[i]);
+        graph[graph.size() - 1].push_back(pred_ind_label[i]);
+      }
+    }
+
+    FILE* tmp_file = fopen("tmp.pat", "w");
+    fprintf(tmp_file, "%lu\n", graph.size());
+
+    for (size_t i = 0; i < graph.size(); ++i) {
+      std::stringstream vertex_stream;
+      vertex_stream << graph[i][0] << " " << ((graph[i].size() - 1) / 2);
+      for (size_t j = 1; j < graph[i].size(); ++j) {
+        vertex_stream << " " << graph[i][j];
+      }
+      fprintf(tmp_file, "%s\n", vertex_stream.str().c_str());
+    }
+    fclose(tmp_file);
+
+    // Source Graph
+    graph.clear();
+
+    graph.resize(u_graph_.vSize());
+
+    graph[0].push_back(0);
+    for (size_t i = 1; i < u_graph_.vSize(); ++i) {
+      graph[i].push_back(0);
+      const std::vector<Graph::Edge>& adj = u_graph_.vAdj(i);
+
+      for (size_t j = 0; j < adj.size(); ++j) {
+        graph[0].push_back(i);
+        graph[0].push_back(adj[j].vertex);
+      }
+    }
+
+    for (size_t p = 0; p < p_graph_.vSize(); ++p) {
+      size_t pred = p_graph_.getVLabel(p).pred;
+      if (pred_label.find(pred) == pred_label.end()) { // if new pred
+        pred_label[pred] = ++max_label;
+      }
+      size_t l = pred_label[pred];
+
+      graph.resize(graph.size() + 1);
+      graph[graph.size() - 1].push_back(l);
+
+      const std::vector<int>& p_vars = p_graph_.getVLabel(p).vars;
+      for (size_t i = 0; i < p_vars.size(); ++i) {
+        if (i == pred_ind_label.size()) {
+          pred_ind_label.push_back(++max_label);
+        }
+        graph[graph.size() - 1].push_back(p_vars[i]);
+        graph[graph.size() - 1].push_back(pred_ind_label[i]);
+      }
+    }
+
+    tmp_file = fopen("tmp.src", "w");
+    fprintf(tmp_file, "%lu\n", graph.size());
+
+    for (size_t i = 0; i < graph.size(); ++i) {
+      std::stringstream vertex_stream;
+      vertex_stream << graph[i][0] << " " << ((graph[i].size() - 1) / 2);
+      for (size_t j = 1; j < graph[i].size(); ++j) {
+        vertex_stream << " " << graph[i][j];
+      }
+      fprintf(tmp_file, "%s\n", vertex_stream.str().c_str());
+    }
+    fclose(tmp_file);
+
+    return true;
   }
 
 };

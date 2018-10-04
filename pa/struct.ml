@@ -46,6 +46,7 @@ module type S = sig
   val ortools : t -> t -> bool
   val str2mzn : t -> t -> bool
   val str2dimacs : t -> t -> bool
+  val str2lad : t -> t -> bool
 
   val union : t -> t -> t
   val empty : int -> t
@@ -336,6 +337,7 @@ module Make (P : Symbol) = struct
   let ortools = embeds MatchCPP.ortools
   let str2mzn = embeds MatchCPP.emb2mzn
   let str2dimacs = embeds MatchCPP.emb2dimacs
+  let str2lad = embeds MatchCPP.emb2lad
 
   let embeds x y = Log.time "Embedding" (match_embeds x) y
 

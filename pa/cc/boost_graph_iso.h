@@ -53,6 +53,114 @@ private:
   bool* iso_;
 };
 
+/*
+bool boost_embeds(const Embedding& emb) {
+  typedef boost::property<edge_name_t, size_t > edge_property;
+  typedef boost::property<vertex_name_t, std::set<size_t>, property<vertex_index_t, int>> vertex_property;
+
+  typedef boost::adjacency_list<vecS, vecS, bidirectionalS, vertex_property, edge_property> graph_type;
+
+  // Build graph1
+  graph_type graph1;
+
+  const Graph& u_graph = emb.get_universe_graph();
+  const LabeledGraph<prop, prop>& p_graph = emb.get_predicate_graph();
+  for (size_t i = 1; i < u_graph.uSize(); ++i){
+    std::set<size_t> vprop;
+    vprop.insert(i);
+    #ifdef BSIH_DEBUG
+    printf("%lu -{%lu}\n", i-1, i);
+    #endif
+    add_vertex(vertex_property(vprop), graph1);
+  }
+
+  size_t max_label = u_graph.uSize();
+
+  std::map<size_t, size_t> pred_label;
+  std::vector<size_t> pred_ind_label;
+
+  for (size_t i = 0; i < p_graph.uSize(); ++i){
+    const prop& p = p_graph.getULabel(i);
+    if (pred_label.find(p.pred) == pred_label.end()) {
+      pred_label[p.pred] = ++max_label;
+    }
+    std::set<size_t> vprop;
+    vprop.insert(pred_label[p.pred]);
+    size_t v = add_vertex(vertex_property(vprop), graph1);
+    #ifdef BSIH_DEBUG
+    printf("%lu -{%lu}\n", v, pred_label[p.pred]);
+    #endif
+    for (size_t j = 0; j < p.vars.size(); ++j) {
+      if (j == pred_ind_label.size()) {
+        pred_ind_label.push_back(++max_label);
+      }
+      add_edge(v, p.vars[j] - 1, edge_property(pred_ind_label[j]), graph1);
+      #ifdef BSIH_DEBUG
+      printf("%lu -{%lu}-> %d\n", v, pred_ind_label[j], p.vars[j] - 1);
+      #endif
+    }
+  }
+
+  // Build graph2
+  graph_type graph2;
+
+  for (size_t i = 1; i < u_graph.vSize(); ++i){
+    const std::vector<Graph::Edge>& vAdj = u_graph.vAdj(i);
+    std::set<size_t> vprop;
+    #ifdef BSIH_DEBUG
+    printf("%lu -{", i-1);
+    #endif
+    for (size_t j = 0; j < vAdj.size(); ++j){
+      vprop.insert(vAdj[j].vertex);
+      #ifdef BSIH_DEBUG
+      printf("%lu, ", vAdj[j].vertex);
+      #endif
+    }
+    #ifdef BSIH_DEBUG
+    printf("}\n");
+    #endif
+    add_vertex(vertex_property(vprop), graph2);
+  }
+
+  for (size_t i = 0; i < p_graph.vSize(); ++i){
+    const prop& p = p_graph.getVLabel(i);
+    if (pred_label.find(p.pred) == pred_label.end()) {
+      pred_label[p.pred] = ++max_label;
+    }
+    std::set<size_t> vprop;
+    vprop.insert(pred_label[p.pred]);
+    size_t v = add_vertex(vertex_property(vprop), graph2);
+    #ifdef BSIH_DEBUG
+    printf("%lu -{%lu}\n", v, pred_label[p.pred]);
+    #endif
+    for (size_t j = 0; j < p.vars.size(); ++j) {
+      if (j == pred_ind_label.size()) {
+        pred_ind_label.push_back(++max_label);
+      }
+      add_edge(v, p.vars[j] - 1, edge_property(pred_ind_label[j]), graph2);
+      #ifdef BSIH_DEBUG
+      printf("%lu -{%lu}-> %d\n", v, pred_ind_label[j], p.vars[j] - 1);
+      #endif
+    }
+  }
+
+  typedef property_map<graph_type, vertex_name_t>::type vertex_name_map_t;
+  typedef property_map_inclusion<vertex_name_map_t, vertex_name_map_t, size_t> vertex_comp_t;
+  vertex_comp_t vertex_comp(get(vertex_name, graph1), get(vertex_name, graph2));
+
+  typedef property_map<graph_type, edge_name_t>::type edge_name_map_t;
+  typedef property_map_equivalent<edge_name_map_t, edge_name_map_t> edge_comp_t;
+  edge_comp_t edge_comp = make_property_map_equivalent(get(edge_name, graph1), get(edge_name, graph2));
+
+  bool is_iso(false);
+  VF2_do_once_callback<graph_type, graph_type> callback(graph1, graph2, &is_iso);
+
+  vf2_subgraph_mono(graph1, graph2, std::ref(callback), vertex_order_by_mult(graph1), edges_equivalent(edge_comp).vertices_equivalent(vertex_comp));
+
+  return is_iso;
+}
+*/
+
 bool boost_embeds(const Embedding& emb) {
   typedef boost::property<edge_name_t, std::set<size_t> > edge_property;
   typedef boost::property<vertex_name_t, std::set<size_t>, property<vertex_index_t, int>> vertex_property;
@@ -149,6 +257,5 @@ bool boost_embeds(const Embedding& emb) {
 
   return is_iso;
 }
-
 
 #endif

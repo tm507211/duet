@@ -50,6 +50,7 @@ bool vf2(Embedding emb);
 bool ortools(Embedding emb);
 bool emb2mzn(Embedding emb);
 bool emb2dimacs(Embedding emb);
+bool emb2lad(Embedding emb);
 
 void find_conflicts(const Embedding& emb, const vector<int>& matching, vector<int>& confs);
 void backtrack(stack<decision>& decisions, Embedding& emb);
@@ -110,7 +111,7 @@ extern "C" {
   CAMLprim value embedsOCAML(value str1, value str2, value algo){ /* str = int * (int * int list) list */
     CAMLparam3(str1, str2, algo);
     CAMLlocal3(head, propList, predList);
-    
+
     vector<vector<uint8_t> > sig1, sig2;    /* Signature of str1 and str2 respectively */
     sig1.resize(Int_val(Field(str1, 0))+1); /* Resize to respective universe size */
     sig2.resize(Int_val(Field(str2, 0))+1);
@@ -152,6 +153,9 @@ extern "C" {
       case 9:
        	result = emb2dimacs(std::move(Embedding(sig1, sig2, pu_label, pv_label)));
 	break;
+      case 10:
+        result = emb2lad(std::move(Embedding(sig1, sig2, pu_label, pv_label)));
+        break;
       default:
 	printf("Error: Invalid Algorithm Choice %d\n", Int_val(algo));
 	exit(-1);
@@ -470,6 +474,8 @@ bool crypto_mini_sat(Embedding emb){
     } else {
       int returnStatus;
       waitpid(child, &returnStatus, 0);
+      returnStatus = WEXITSTATUS(returnStatus);
+      if (returnStatus > 1) { printf("Error"); fflush(stdout); }
       return (returnStatus == 0);
     }
   } else {
@@ -490,6 +496,8 @@ bool lingeling(Embedding emb){
     } else {
       int returnStatus;
       waitpid(child, &returnStatus, 0);
+      returnStatus = WEXITSTATUS(returnStatus);
+      if (returnStatus > 1) { printf("Error"); fflush(stdout); }
       return (returnStatus == 0);
     }
   } else {
@@ -510,6 +518,8 @@ bool haifacsp(Embedding emb){
     } else {
       int returnStatus;
       waitpid(child, &returnStatus, 0);
+      returnStatus = WEXITSTATUS(returnStatus);
+      if (returnStatus > 1) { printf("Error"); fflush(stdout); }
       return (returnStatus == 0);
     }
   } else {
@@ -549,6 +559,8 @@ bool ortools(Embedding emb){
     } else {
       int returnStatus;
       waitpid(child, &returnStatus, 0);
+      returnStatus = WEXITSTATUS(returnStatus);
+      if (returnStatus > 1) { printf("Error"); fflush(stdout); }
       return (returnStatus == 0);
     }
   } else {
@@ -564,6 +576,11 @@ bool emb2mzn(Embedding emb){
 bool emb2dimacs(Embedding emb){
   if (!emb.get_valid()) return false;
   return emb.to_dimacs();
+}
+
+bool emb2lad(Embedding emb){
+  if (!emb.get_valid()) return false;
+  return emb.to_lad();
 }
 
 

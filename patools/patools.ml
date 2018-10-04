@@ -404,6 +404,7 @@ let _ =
   | "ortools" -> load_and_run_embeds Config.ortools
   | "str2mzn" -> load_and_run_embeds Config.str2mzn
   | "str2dimacs" -> load_and_run_embeds Config.str2dimacs
+  | "str2lad" -> load_and_run_embeds Config.str2lad
   | "diff-check" ->
     let program = load_automaton Sys.argv.(2) in
     let proof = load_automaton Sys.argv.(3) in
