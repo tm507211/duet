@@ -22,6 +22,7 @@ def main():
   for i in xrange(len(params)):
     params[i][::3] = map(int, params[i][::3])
 
+  i = 0
   while i != N:
     p = random.choice(params)
 
