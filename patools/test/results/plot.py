@@ -1,4 +1,6 @@
 #! /usr/bin/python
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
@@ -60,11 +62,11 @@ solver = [("MatchEmbeds","s", "b"),
 
 solvers = [i for i in range(cols)]
 if len(sys.argv) > 4:
-    solvers = sys.argv[4:]
+    solvers = map(lambda x: int(x) - 1, sys.argv[4:])
 
 for i in range(len(solvers)):
     data_ind = cols+i
-    (label, marker, color) = solver[int(solvers[i])]
+    (label, marker, color) = solver[solvers[i]]
     d = []
     for j in range(len(data[data_ind])):
       if data[i][j] != "Error":
@@ -74,7 +76,9 @@ for i in range(len(solvers)):
 plt.xlabel('Instances Solved')
 plt.ylabel('Time (s)')
 plt.ylim((0,TO))
+plt.xlim((0,100))
 #plt.yscale('log')
 #plt.legend(bbox_to_anchor=(0.38,1.0), loc=2)
-plt.legend(loc=0, ncol=1, prop={'size': 14})
-plt.show()
+#plt.legend(loc=0, ncol=1, prop={'size': 14})
+plt.savefig('figure1')
+#plt.show()

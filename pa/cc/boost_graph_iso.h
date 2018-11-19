@@ -53,7 +53,7 @@ private:
   bool* iso_;
 };
 
-/*
+bool boost_embeds_simple(const Embedding& emb);
 bool boost_embeds(const Embedding& emb) {
   typedef boost::property<edge_name_t, size_t > edge_property;
   typedef boost::property<vertex_name_t, std::set<size_t>, property<vertex_index_t, int>> vertex_property;
@@ -65,6 +65,19 @@ bool boost_embeds(const Embedding& emb) {
 
   const Graph& u_graph = emb.get_universe_graph();
   const LabeledGraph<prop, prop>& p_graph = emb.get_predicate_graph();
+
+  // Check if this is a labeled graph and not a higher arity structure.
+  bool simple = true;
+  for (size_t i = 0; i < p_graph.uSize(); ++i){
+    if (p_graph.getULabel(i).vars.size() > 2) {
+      simple = false;
+      break;
+    }
+  }
+  if (simple) {
+    return boost_embeds_simple(std::move(emb));
+  }
+
   for (size_t i = 1; i < u_graph.uSize(); ++i){
     std::set<size_t> vprop;
     vprop.insert(i);
@@ -159,9 +172,8 @@ bool boost_embeds(const Embedding& emb) {
 
   return is_iso;
 }
-*/
 
-bool boost_embeds(const Embedding& emb) {
+bool boost_embeds_simple(const Embedding& emb) {
   typedef boost::property<edge_name_t, std::set<size_t> > edge_property;
   typedef boost::property<vertex_name_t, std::set<size_t>, property<vertex_index_t, int>> vertex_property;
 
@@ -184,7 +196,7 @@ bool boost_embeds(const Embedding& emb) {
   std::map<size_t, std::map<size_t, std::set<size_t>>> edge_labels;
   for (size_t i = 0; i < p_graph.uSize(); ++i){
     const prop& p = p_graph.getULabel(i);
-    assert (p.vars.size() == 2);
+    assert (p.vars.size() <= 2);
     edge_labels[p.vars[0]-1][p.vars[1]-1].insert(p.pred);
   }
 

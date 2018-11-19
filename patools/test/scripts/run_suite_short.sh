@@ -20,7 +20,7 @@ else
 fi
 echo -n "\t$R1"
 
-R2=`timeout $TO "$DUET"/patools.native match-embeds $file`
+R2=`timeout $TO "$DUET"/patools.native crypto-mini-sat $file`
 if echo "$R2" | grep --quiet "Error"; then
     R2="Error"
 elif [ "$R2" = "" ]; then
@@ -30,7 +30,7 @@ else
 fi
 echo -n "\t$R2"
 
-R3=`timeout $TO "$DUET"/patools.native match-embeds $file`
+R3=`timeout $TO "$DUET"/patools.native lingeling $file`
 if echo "$R3" | grep --quiet "Error"; then
     R3="Error"
 elif [ "$R3" = "" ]; then
@@ -40,7 +40,7 @@ else
 fi
 echo -n "\t$R3"
 
-R4=`timeout $TO "$DUET"/patools.native match-embeds $file`
+R4=`timeout $TO "$DUET"/patools.native haifacsp $file`
 if echo "$R4" | grep --quiet "Error"; then
     R4="Error"
 elif [ "$R4" = "" ]; then
@@ -50,7 +50,7 @@ else
 fi
 echo -n "\t$R4"
 
-R5=`timeout $TO "$DUET"/patools.native match-embeds $file`
+R5=`timeout $TO "$DUET"/patools.native gecode $file`
 if echo "$R5" | grep --quiet "Error"; then
     R5="Error"
 elif [ "$R5" = "" ]; then
@@ -60,7 +60,7 @@ else
 fi
 echo -n "\t$R5"
 
-R6=`timeout $TO "$DUET"/patools.native match-embeds $file`
+R6=`timeout $TO "$DUET"/patools.native vf2 $file`
 if echo "$R6" | grep --quiet "Error"; then
     R6="Error"
 elif [ "$R6" = "" ]; then
@@ -70,7 +70,7 @@ else
 fi
 echo -n "\t$R6"
 
-R7=`timeout $TO "$DUET"/patools.native match-embeds $file`
+R7=`timeout $TO "$DUET"/patools.native ortools $file`
 if echo "$R7" | grep --quiet "Error"; then
     R7="Error"
 elif [ "$R7" = "" ]; then

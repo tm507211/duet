@@ -19,6 +19,7 @@
 #include <string.h>
 #include "graph.h"
 #include "embedding.h"
+#include "signatures.h"
 #include "gecode_embedding.h"
 #include <gecode/search.hh>
 #include "boost_graph_iso.h"
@@ -65,6 +66,7 @@ bool choose(stack<decision>& decisions, const vector<int>& confs, Embedding& emb
 
 extern "C" {
   void read_structure(value str, vector<vector<uint8_t> > &sig, vector<prop> &label, vector<int>& pred_pos, size_t& next_pos) {
+      sigPred s(str, label, pred_pos, next_pos);
       CAMLparam1(str);
       CAMLlocal3(head, propList, predList);
 

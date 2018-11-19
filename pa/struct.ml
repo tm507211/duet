@@ -326,7 +326,7 @@ module Make (P : Symbol) = struct
 
   let num_queries _ = !embed
 
-  let embeds f x y = Log.time "Embedding" (embeds f x) y
+  let embeds f x y = logf ~level:`always "%a %a" pp x pp y; Log.time "Embedding" (embeds f x) y
 
   let match_embeds = embeds MatchCPP.match_embeds
   let crypto_mini_sat = embeds MatchCPP.crypto_mini_sat
